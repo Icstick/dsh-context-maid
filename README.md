@@ -41,6 +41,11 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | **可观测** | 每次策展写审计：时间/类型/范围/token 前后/归档条目；/context-maid status 随时查 |
 
 ## 安装与装配（重要）
+> **GitHub 一键安装**：`dsh plugin --profile <name> add github:Icstick/dsh-context-maid`
+> 会挂载 context-maid 条目。**装完必须按下方装配说明 disable 官方
+> compaction-basic / tool-result-pruner**（maid 接管同一 ctx.compaction 服务，
+> 官方不禁用则 maid 自动旁路不生效）；auditDir 建议显式配置。
+
 
 maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction）与官方瘦身器
 （ctx.toolResultPruner）——cordis 同 key 服务只能有一个提供者，因此**必须 disable 官方
