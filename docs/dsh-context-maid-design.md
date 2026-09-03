@@ -1,6 +1,6 @@
 # dsh-context-maid — 自动上下文策展插件设计文档 v0.2（用户拍板后定稿）
 
-> 日期：2026-09-03 | 状态：v0.2 定稿（M1/M2/M3 已实现；M4 待做；实机验证待挂载）（用户拍板：命名 dsh-context-maid、repo 在 my-plugins/、工具链 mjs+node --test、sweep aggressive 保留意见、新增 compact 模型用户可配 + 智能路由端点） | 前置调研：
+> 日期：2026-09-03 | 状态：v0.2 定稿（M1-M4 全部实现（28 测试）；实机验证待挂载）（用户拍板：命名 dsh-context-maid、repo 在 my-plugins/、工具链 mjs+node --test、sweep aggressive 保留意见、新增 compact 模型用户可配 + 智能路由端点） | 前置调研：
 > dsh-compaction-survey.md（本地基建）、context-mgmt-survey.md（业界）、
 > context-compaction-assets-draft.md（资产）、context-compaction-survey-index.md（索引+实测）
 > 用户拍板（verbatim 语义）：独立 repo；全阶段规划；阈值用户可调；
