@@ -40,6 +40,51 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点 |
 | **可观测** | 每次策展写审计：时间/类型/范围/token 前后/归档条目；/context-maid status 随时查 |
 
+## 安装与装配（重要）
+
+maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction）与官方瘦身器
+（ctx.toolResultPruner）——cordis 同 key 服务只能有一个提供者，因此**必须 disable 官方
+实例**，否则 maid 自动进入旁路模式（防呆，见日志 warn）：
+
+```yaml
+# profile cordis.patch.yml（如 web profile）
+- id: compaction-basic
+  disabled: true
+- id: tool-result-pruner
+  disabled: true
+```
+
+然后在 profile package.json 加依赖并 insert maid：
+
+```json
+{ "dependencies": { "dsh-context-maid": "link:D:/path/to/dsh-context-maid" },
+  "dsh": { "profile": { "bundles": ["dsh-context-maid"] } } }
+```
+
+```yaml
+# 同一 cordis.patch.yml
+- insert:
+    - id: context-maid
+      name: dsh-context-maid
+```
+
+重启后 `/context-maid status` 应显示 `ctx.compaction = MaidCompactionEngine（maid 提供）`。
+
+## 配置（用户可调）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| trigger.userRatio | 0.4 | **主旋钮**：上下文阈值（占模型窗口比例）。映射官方 thresholdRatio，0.05-0.95 |
+| trigger.minTokens | 30000 | 低于此总 token 不触发 |
+| slim.thresholdChars | 4000 | tool 输出超过即内容感知瘦身 |
+| slim.headChars / tailChars | 800 / 800 | 瘦身保留预算 |
+| sweep.enabled / aggressive | true / false | 无效日志清理（aggressive 档待定） |
+| fold.retainRatio | 0.16 | 压缩保留尾比例 |
+| pin.enabled / inject | true / true | 钉扎保护（M3） |
+| archive.enabled | true | 先归档后压缩（M3，需 ACP） |
+| summarization.provider / model | '' / '' | **摘要模型可配**（空=跟随对话模型；可填便宜模型或本地 OpenAI 兼容网关） |
+| auditDir | $DSH_HOME/context-maid | 审计库位置 |
+
 ## 设计文档
 
 完整设计（五级策展模型、模块架构、配置全表、M1-M4 里程碑、测试计划）见
