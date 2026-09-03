@@ -11,10 +11,15 @@
 //    审计不再依赖 ACP 在线——可区分「事件未达」与「归档路径断开」。
 //  - acp 解析多路：ctx.get('acp') → ctx.acp（cordis provide 属性访问）兜底。
 // 2026-09-03 二次实测（audit 落行但 archive_ids 空，detail=「acp.append 未返回 id」）：
-//  - 根因：ACP writeGuard secret 扫描 block——摘要正文含「token: 5a8cda…」等
+//  - 根因一：ACP writeGuard secret 扫描 block——摘要正文含「token: 5a8cda…」等
 //    疑似凭据格式（checkpoint 摘要保留命令/配置值，易命中）。ACP 安全功能正确，
 //    归档侧适配：预脱敏（REDACT_PATTERNS 与 ACP governance.mjs SECRET_PATTERNS 同步），
 //    block 后自动脱敏重试一次；detail 记录 append 的 decision/reasons（可观测）。
+// 2026-09-03 三次实测（脱敏起效、越过 writeGuard 后暴露）：
+//  - 根因二：sensitivity: 'internal' 不在 ACP 合法枚举
+//    （public|private|sensitive|secret，store assertChoice 契约）——此前一直被
+//    secret block 挡在 store 之前，未暴露。改为 'private'（归档摘要含会话内容，
+//    按 ACP 默认 user 消息同级敏感度处理）。
 //
 // 注意：原始被压内容已在 ACP ledger（ACP 并行摄入全部会话事件）——
 // 这里补的是「摘要级」沉淀，让被压区间的语义可经 ACP recall 一层找回。
@@ -81,7 +86,7 @@ function appendArchive(acp, content, sourceRef) {
     authority: 'single_observation',
     confidence: 0.6,
     durability: 0.5,
-    sensitivity: 'internal',
+    sensitivity: 'private', // ACP SENSITIVITIES 契约值（public|private|sensitive|secret）
     claimDomain: 'experience',
     sourceRef,
   }

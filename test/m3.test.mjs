@@ -74,6 +74,7 @@ test('registerArchiver：compaction/summary → acp.append + audit 留痕', asyn
   }
   listeners['session/event'][0]({ id: 'sess1' }, event)
   assert.equal(appended.length, 1)
+  assert.equal(appended[0].sensitivity, 'private', 'sensitivity 用 ACP 契约合法值')
   assert.equal(appended[0].sourceClass, 'agent_authored')
   assert.equal(appended[0].claimDomain, 'experience')
   assert.ok(appended[0].content.includes('checkpoint 摘要内容'))
