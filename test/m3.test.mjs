@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { collectPinnedFacts, buildPinInstruction } from '../src/pinner.mjs'
-import { summaryTextOf, registerArchiver } from '../src/archiver.mjs'
+import { summaryTextOf, registerArchiver, redactSecrets } from '../src/archiver.mjs'
 
 // —— pinner ——
 test('collectPinnedFacts：ACP 高 authority + work goal + extra 清单', async () => {
@@ -104,4 +104,38 @@ test('registerArchiver：非 summary 事件不动作；ACP 离线 → 审计留�
   assert.equal(auditRows2[0].op, 'fold')
   assert.deepEqual(auditRows2[0].archiveIds, [])
   assert.match(auditRows2[0].detail, /acp 不可用/, 'detail 记录跳过原因')
+})
+
+test('redactSecrets：疑似凭据打码，普通内容不动', () => {
+  assert.equal(redactSecrets('frp token: 5a8cda01e84c3f6eed1953998737a59588f9d97d27d520c5 已配'), 'frp token: [redacted] 已配')
+  assert.equal(redactSecrets('ghp_abcdefghijklmnopqrstuvwxyz1234567890 推送'), '[redacted] 推送')
+  assert.equal(redactSecrets('AKIAIOSFODNN7EXAMPLE 示例'), '[redacted] 示例')
+  assert.equal(redactSecrets('普通 git push origin master'), '普通 git push origin master')
+  // 无值短串不动（≥12 字符才疑似）
+  assert.equal(redactSecrets('password: hi'), 'password: hi')
+})
+
+test('registerArchiver：append block（疑似凭据）→ 脱敏重试成功归档', () => {
+  const calls = []
+  const acp = {
+    append: (input) => {
+      calls.push(input.content)
+      if (calls.length === 1) return { inserted: false, id: null, decision: 'block', reasons: ['secret/credential pattern detected'] }
+      return { inserted: true, id: 'ev_maid_redacted' }
+    },
+  }
+  const auditRows = []
+  const listeners = {}
+  const ctx = { get: () => acp, on: (e, cb) => { (listeners[e] ??= []).push(cb) }, logger: { warn() {} } }
+  registerArchiver(ctx, { enabled: true, audit: { append: (r) => auditRows.push(r) } })
+  listeners['session/event'][0]({ id: 's1' }, {
+    type: 'compaction/summary', seq: 9,
+    data: { compactionId: 'c9', shadowedRange: { start: 1, end: 5 }, shadowedSeqs: [1, 2], shadowedTokenCount: 3000,
+      summary: JSON.stringify([{ type: 'text', text: 'frp token: 5a8cda01e84c3f6eed1953998737a59588f9d97d27d520c5 已配' }]) },
+  })
+  assert.equal(calls.length, 2, 'block 后脱敏重试')
+  assert.ok(!calls[1].includes('5a8cda'), '重试内容已脱敏')
+  assert.equal(auditRows[0].archiveIds[0], 'ev_maid_redacted')
+  assert.match(auditRows[0].summary, /ACP ev_maid_redacted/, 'audit 记成功归档 id')
+  assert.match(auditRows[0].detail, /脱敏/, 'detail 记脱敏重试')
 })
