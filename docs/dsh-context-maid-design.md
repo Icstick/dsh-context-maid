@@ -231,6 +231,33 @@ dsh-context-maid（独立 cordis 插件）
 - 注意：摘要模型质量直接决定压缩质量——文档将引导用户「便宜但别太弱；压缩是不可逆的，
   省下的预算不该用关键信息丢失来换」（与业界 Cursor/Claude 结论一致：摘要质量是最大抱怨点）
 
+## 9.5 实测记录（2026-09-03 live，正式 web profile）
+
+**挂载**：profile patch disable 官方 compaction-basic / tool-result-pruner，
+maid 作为 ctx.compaction / ctx.toolResultPruner 唯一提供者（同 key 单提供者约束）；
+bundle 只允许同 id 配置覆盖，禁止二次插入（否则 boot 报 duplicate loader entry id）。
+
+**/context-maid status 实测**：
+```
+engine: ctx.compaction = MaidCompactionEngine（maid 提供，阈值映射生效）
+userRatio: 0.4（→ 官方 thresholdRatio）
+enabled: true
+```
+
+**/compact 实测**：压缩 761 条历史记录（≈372,810 tokens）成功——
+事务由 MaidCompactionEngine 继承的官方路径执行（阈值映射未破坏事务语义）。
+
+**发现与修复（commit 6b4d680）**：压缩成功但 maid_audit 0 行——archiver
+旧实现把 audit 写在 acp.append 之后且依赖 ACP 在线解析（ctx.get('acp')），
+任一前置 return（ACP 不可达 / 摘要空）都无痕，无法区分「事件未达」与
+「归档路径断开」。修复：**audit-first**——compaction/summary 事件到达即写
+审计（op=fold，detail 记录归档结果或跳过原因），ACP 归档降为可选附加；
+acp 解析多路兜底 ctx.get('acp') → ctx.acp。测试同步更新
+（ACP 离线 → 不 append 但审计留痕）。重启后 /compact 应见 maid_audit 落行。
+
+**联动防御（ACP commit c75544a）**：压缩 checkpoint 消息（user/message +
+surfaceOp={op:replace}）与插件源消息不再冒充 user_input 入 ledger。
+
 ## 10. 参考
 
 - 本地：dsh-compaction-survey.md §5 扩展点 / §6 缺口 / §7 接口面
