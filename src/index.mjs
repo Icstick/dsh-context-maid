@@ -14,6 +14,7 @@ import { MaidCompactionEngine } from './engine.mjs'
 import { openMaidAudit } from './audit.mjs'
 import { registerMaidCommands } from './commands.mjs'
 import { MaidSlimmer } from './slimmer.mjs'
+import { registerArchiver } from './archiver.mjs'
 
 export const name = 'context-maid'
 export const inject = []
@@ -36,6 +37,7 @@ export const Config = z.object({
   // —— 钉扎（M3）——
   'pin.enabled': z.boolean().default(true),
   'pin.inject': z.boolean().default(true),
+  'pin.extra': z.array(z.string()).default([]), // 用户显式钉扎清单（如 ['必须用 pnpm']）
   // —— 归档（M3）——
   'archive.enabled': z.boolean().default(true),
   // —— 摘要模型（用户 2026-09-03：可配便宜/本地模型 + 智能路由端点）——
@@ -84,6 +86,9 @@ export function apply(ctx, config = {}) {
   // 审计库 + 命令
   const auditDir = config.auditDir || path.join(process.env.DSH_HOME || '', 'context-maid')
   const audit = openMaidAudit(auditDir)
+
+  // M3：归档——消费 compaction/summary → ACP ledger（摘要即证据；ACP 可选，离线跳过）
+  registerArchiver(ctx, { enabled: config['archive.enabled'] !== false, audit })
 
   registerMaidCommands(ctx, {
     config,

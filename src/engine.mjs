@@ -8,6 +8,7 @@
 //  - summarize() 官方唯一子类钩子：M4 知识感知摘要在此覆写
 //  - 钉扎（M3 spike）：范围排除需在覆写点做，见设计 §5.2
 
+import { randomUUID } from 'node:crypto'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 
 /**
@@ -45,8 +46,41 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     this.maidConfig = maidConfig
   }
 
-  // M4：知识感知摘要在此覆写（归档 → PIN 事实注入 → 官方摘要）
-  // protected summarize(input, agent, signal) { ... }
+  /**
+   * M3：覆写官方唯一子类钩子——摘要前注入 PIN 事实（软保护）。
+   * collectPinnedFacts 失败/无事实 → 走官方原样摘要（fail-open）。
+   * @param {import('@deepseek-ai/dsh-compaction-basic').SummarizationInput} input
+   * @param {import('@deepseek-ai/dsh-agent').Agent} agent
+   * @param {AbortSignal} [signal]
+   */
+  async summarize(input, agent, signal) {
+    try {
+      const maid = this.maidConfig ?? {}
+      if (maid['pin.enabled'] === false) return super.summarize(input, agent, signal)
+      const { collectPinnedFacts, buildPinInstruction } = await import('./pinner.mjs')
+      const cwd = agent?.session?.cwd ?? ''
+      const facts = await collectPinnedFacts(this.ctx, {
+        scopeId: 'user-global',
+        cwd,
+        extra: Array.isArray(maid['pin.extra']) ? maid['pin.extra'] : [],
+      })
+      const pinBlock = buildPinInstruction(facts)
+      if (!pinBlock) return super.summarize(input, agent, signal)
+      // 把 PIN 段作为额外 user 消息附在重放消息后（随区域一起送给摘要模型）
+      const pinMessage = {
+        id: randomUUID(),
+        role: 'user',
+        content: [{ type: 'text', text: pinBlock }],
+        source: { kind: 'plugin', plugin: 'dsh-context-maid', form: 'pin' },
+      }
+      const messages = [...(input?.messages ?? []), pinMessage]
+      return super.summarize({ ...input, messages }, agent, signal)
+    } catch (err) {
+      this.ctx.logger?.warn?.('[context-maid] pin inject failed, fallback to official summarize: '
+        + (err instanceof Error ? err.message : String(err)))
+      return super.summarize(input, agent, signal)
+    }
+  }
 }
 
 export default MaidCompactionEngine
