@@ -40,6 +40,51 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点 |
 | **可观测** | 每次策展写审计：时间/类型/范围/token 前后/归档条目；/context-maid status 随时查 |
 
+## Agent 安装指南（面向自动化装配）
+
+> 给需要在本机 dsh 装配本插件的 agent/脚本读；人工装配见下一节。
+> 硬约束：① **必须 disable 官方 compaction-basic 与 tool-result-pruner**（maid 接管
+> 同一 ctx.compaction 服务，官方不禁用则 maid 自动旁路不生效——防呆，见日志 warn）；
+> ② pnpm install 前先停 dsh（Windows native DLL 锁）；③ 同 id patch 条目整体覆盖。
+
+**1. 定位 profile**：`<DSH_HOME>/profiles/<profile>/`；先读 `package.json`，无
+`dsh.profile.bundles` 键则 profile 未初始化，先初始化再继续。
+
+**2. 添加依赖**（二选一）：
+
+```bash
+# A. GitHub 源：CLI 自动把声明 dsh.bundle 的包加入 dsh.profile.bundles
+dsh plugin --profile <profile> add github:Icstick/dsh-context-maid
+# B. 本地开发：profile package.json dependencies 加 "dsh-context-maid": "link:<绝对路径>",
+#    并在同文件 dsh.profile.bundles 数组追加 "dsh-context-maid"
+```
+
+⚠️ `dsh plugin add` 不会写配置条目——第 3 步必须做。
+
+**3. 装配（profile 根 `cordis.patch.yml`，无则新建）**：先 disable 两个官方引擎，再挂 maid：
+
+```yaml
+- id: compaction-basic      # 必须：官方默认引擎禁用，否则 maid 旁路
+  disabled: true
+- id: tool-result-pruner    # 必须：官方瘦身器禁用
+  disabled: true
+- id: context-maid
+  name: dsh-context-maid
+  config:
+    auditDir: C:\path\to\context-maid   # 建议显式（默认 $DSH_HOME/context-maid）
+    trigger:
+      userRatio: 0.4        # 可选：触发阈值主旋钮
+```
+
+**4. 安装并重启**：停 dsh → profile 目录 `pnpm install` → 重启 dsh。
+
+**5. 验证**：对话里 `/context-maid status` 应输出
+`engine: ctx.compaction = MaidCompactionEngine（maid 提供，阈值映射生效）`。
+
+**故障速查**：status 显示 BasicCompactionEngine（官方）→ 官方没 disable，回去查第 3 步
+前两条；audit 目录落在意外位置 → auditDir 未显式配置；/context-maid 命令不存在 →
+commands 服务时序（插件会等待注册）或 bundle 未挂载。
+
 ## 安装与装配（重要）
 > **GitHub 一键安装**：`dsh plugin --profile <name> add github:Icstick/dsh-context-maid`
 > 会挂载 context-maid 条目。**装完必须按下方装配说明 disable 官方
