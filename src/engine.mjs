@@ -10,6 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
+import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 
 /**
  * 把 maid Config 映射为官方 BasicCompactionConfig 子集。
@@ -47,39 +48,96 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
   }
 
   /**
-   * M3：覆写官方唯一子类钩子——摘要前注入 PIN 事实（软保护）。
-   * collectPinnedFacts 失败/无事实 → 走官方原样摘要（fail-open）。
-   * @param {import('@deepseek-ai/dsh-compaction-basic').SummarizationInput} input
-   * @param {import('@deepseek-ai/dsh-agent').Agent} agent
+   * M3+M4：覆写官方唯一子类钩子——PIN 注入 + 智能路由摘要。
+   * 目标解析链：
+   *   1. 注册的 resolver（外部智能路由插件 registerSummarizationResolver 接入；
+   *      可返回 null/undefined 表示不决策，继续下一环）
+   *   2. maid Config 显式 summarization.provider/model（用户配便宜/本地模型）
+   *   3. 官方回落（最近路由对话模型）→ super.summarize
+   * PIN 事实注入在 1/2 路径同样生效（消息末尾追加 pin user message）。
+   * @param {object} input - SummarizationInput { system?, tools?, messages }
+   * @param {object} agent - Agent
    * @param {AbortSignal} [signal]
    */
   async summarize(input, agent, signal) {
+    const maid = this.maidConfig ?? {}
+    // PIN 事实收集（两种路径共用）
+    let pinMessage = null
     try {
-      const maid = this.maidConfig ?? {}
-      if (maid['pin.enabled'] === false) return super.summarize(input, agent, signal)
-      const { collectPinnedFacts, buildPinInstruction } = await import('./pinner.mjs')
-      const cwd = agent?.session?.cwd ?? ''
-      const facts = await collectPinnedFacts(this.ctx, {
-        scopeId: 'user-global',
-        cwd,
-        extra: Array.isArray(maid['pin.extra']) ? maid['pin.extra'] : [],
-      })
-      const pinBlock = buildPinInstruction(facts)
-      if (!pinBlock) return super.summarize(input, agent, signal)
-      // 把 PIN 段作为额外 user 消息附在重放消息后（随区域一起送给摘要模型）
-      const pinMessage = {
-        id: randomUUID(),
-        role: 'user',
-        content: [{ type: 'text', text: pinBlock }],
-        source: { kind: 'plugin', plugin: 'dsh-context-maid', form: 'pin' },
+      if (maid['pin.enabled'] !== false) {
+        const { collectPinnedFacts, buildPinInstruction } = await import('./pinner.mjs')
+        const cwd = agent?.session?.cwd ?? ''
+        const facts = await collectPinnedFacts(this.ctx, {
+          scopeId: 'user-global',
+          cwd,
+          extra: Array.isArray(maid['pin.extra']) ? maid['pin.extra'] : [],
+        })
+        const pinBlock = buildPinInstruction(facts)
+        if (pinBlock) {
+          pinMessage = {
+            id: randomUUID(),
+            role: 'user',
+            content: [{ type: 'text', text: pinBlock }],
+            source: { kind: 'plugin', plugin: 'dsh-context-maid', form: 'pin' },
+          }
+        }
       }
-      const messages = [...(input?.messages ?? []), pinMessage]
-      return super.summarize({ ...input, messages }, agent, signal)
     } catch (err) {
-      this.ctx.logger?.warn?.('[context-maid] pin inject failed, fallback to official summarize: '
-        + (err instanceof Error ? err.message : String(err)))
-      return super.summarize(input, agent, signal)
+      this.ctx.logger?.warn?.('[context-maid] pin collect failed: ' + (err instanceof Error ? err.message : String(err)))
     }
+    const messages = pinMessage ? [...(input?.messages ?? []), pinMessage] : input?.messages
+
+    // —— M4 智能路由目标解析 ——
+    try {
+      const defaultTarget = { provider: String(maid['summarization.provider'] ?? ''), model: String(maid['summarization.model'] ?? '') }
+      const resolved = await this.resolveSummarizationTarget(agent, defaultTarget)
+      if (resolved && resolved.provider && resolved.model) {
+        const result = await maidSummarizeWithLlm(this.ctx, { ...resolved, maxTokens: maid.summarizationMaxTokens ?? 8192 }, { ...input, messages }, agent, signal)
+        // 审计：路由决策
+        try {
+          this.ctx.logger?.info?.('[context-maid] summarize routed to ' + resolved.provider + '/' + resolved.model)
+        } catch { /* ignore */ }
+        return result
+      }
+    } catch (err) {
+      this.ctx.logger?.warn?.('[context-maid] maid summarize failed, fallback to official: '
+        + (err instanceof Error ? err.message : String(err)))
+    }
+    // 回落：官方路径（maid 显式配置经 toOfficialConfig 已映射 summarizationProvider/Model）
+    return super.summarize({ ...input, messages }, agent, signal)
+  }
+
+  /** 智能路由解析器注册表（外部插件接入点） */
+  #resolvers = []
+
+  /**
+   * 注册摘要目标解析器。解析器签名：
+   *   async (agent, defaultTarget) => { provider, model } | null | undefined
+   * 返回 null/undefined = 不决策（继续 maid Config → 官方回落）。
+   * @param {(agent: object, defaultTarget: object) => Promise<object|null|undefined>|object|null|undefined} fn
+   * @returns {() => void} 注销函数
+   */
+  registerSummarizationResolver(fn) {
+    if (typeof fn !== 'function') throw new TypeError('registerSummarizationResolver: fn must be a function')
+    this.#resolvers.push(fn)
+    return () => { this.#resolvers = this.#resolvers.filter((f) => f !== fn) }
+  }
+
+  /** 依次询问注册的 resolver；全不决策返回 maid Config 显式目标或 null。 */
+  async resolveSummarizationTarget(agent, defaultTarget) {
+    for (const fn of this.#resolvers) {
+      try {
+        const out = await fn(agent, defaultTarget)
+        if (out && typeof out.provider === 'string' && out.provider && typeof out.model === 'string' && out.model) {
+          return { provider: out.provider, model: out.model }
+        }
+      } catch (err) {
+        this.ctx.logger?.warn?.('[context-maid] summarization resolver error: '
+          + (err instanceof Error ? err.message : String(err)))
+      }
+    }
+    if (defaultTarget && defaultTarget.provider && defaultTarget.model) return defaultTarget
+    return null
   }
 }
 
