@@ -257,6 +257,27 @@ acp 解析多路兜底 ctx.get('acp') → ctx.acp。测试同步更新
 
 **联动防御（ACP commit c75544a）**：压缩 checkpoint 消息（user/message +
 surfaceOp={op:replace}）与插件源消息不再冒充 user_input 入 ledger。
+**第二轮实测与修复（commit 0732f60）**：重启后 /compact（1002 条 ≈409k tokens）
+audit 落行但 archive_ids=[]，detail「acp.append 未返回 id」——根因：ACP
+writeGuard secret 扫描 **block 而非 throw**（返回 {inserted:false, decision:'block'}），
+压缩摘要含命令/配置样例（如 `frp token: 5a8cda…`）命中 SECRET_PATTERNS。
+修复：archiver 内置 `redactSecrets`（键名保留、值掩码 [redacted]；高熵整段掩码），
+block → 脱敏重试一次；detail 记录 decision + reasons。
+
+**第三轮实测与修复（commit 594daf7）**：脱敏放行后暴露真身——detail「sensitivity
+must be one of public|private|sensitive|secret, got \"internal\"」：archiver 一直传
+`sensitivity:'internal'`（不在 ACP 枚举，store.append 以 TypeError 断言），此前被
+secret block 挡在更外层、从未到达 store。修复：改 `sensitivity:'private'`（契约值，
+与 ACP SENSITIVITIES 同步）。前两轮修复让内容逐层深入，才使该契约错误暴露——
+audit-first 的可观测 detail 是逐轮定位的关键。
+
+**最终验证（2026-09-03）**：本会话 /compact（session-58f5268c…，104,665 tokens，
+range 336135:394182）→ maid_audit id=3 `archive_ids=["ev_ae44fc5f2319a4d7b33a95de"]`，
+detail「已归档（decision=allow）」（干净路径，未触发脱敏）；ACP ledger 侧
+ev_ae44fc5f2319a4d7b33a95de 存在：agent_authored / single_observation / experience /
+sensitivity=private / content=【maid 压缩归档】摘要 / source_ref 含
+sessionEventId 394607 + maidCompactionId。**归档链路端到端闭环。**
+
 
 ## 10. 参考
 
