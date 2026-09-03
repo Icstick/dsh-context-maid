@@ -1,0 +1,48 @@
+{
+  "name": "dsh-context-maid",
+  "description": "自动上下文策展：tool 输出瘦身 + 无效日志清理 + 工作流/记忆钉扎保护 + 先归档后压缩",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": {
+      "default": "./src/index.mjs"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-compaction-basic": ">=0.1.2-alpha.0 <1.0.0",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.8 <0.2.0",
+    "@deepseek-ai/schemastery": ">=3.0.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.8 <0.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-compaction-basic": "0.1.2-alpha.1",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.8",
+    "@deepseek-ai/schemastery": ">=3.0.0",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "@types/node": "^26.0.0",
+    "oxlint": "^0.18.1"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "lint": "oxlint"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,4 @@
+# dsh-context-maid bundle patch
+- insert:
+    - id: context-maid
+      name: dsh-context-maid
