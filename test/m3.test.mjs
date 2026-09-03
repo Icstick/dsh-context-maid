@@ -83,7 +83,7 @@ test('registerArchiver：compaction/summary → acp.append + audit 留痕', asyn
   assert.equal(auditRows[0].archiveIds[0], 'obs_maid1')
 })
 
-test('registerArchiver：非 summary 事件 / ACP 离线 / disabled → 不动作', async () => {
+test('registerArchiver：非 summary 事件不动作；ACP 离线 → 审计留痕（detail 记原因）', async () => {
   let appendCalled = 0
   const acp = { append: () => { appendCalled++; return { id: 'x' } } }
   const listeners = {}
@@ -94,10 +94,14 @@ test('registerArchiver：非 summary 事件 / ACP 离线 / disabled → 不动�
   listeners['session/event'][0]({}, { type: 'compaction/summary', data: { summary: 'no acp check now' } })
   assert.equal(appendCalled, 1, 'ACP 在线 + summary → 会调')
 
+  // audit-first：ACP 离线 → 不 append 但审计留痕（detail=原因），保证策展可观测
   const listeners2 = {}
   const ctx2 = { get: () => undefined, on: (e, cb) => { (listeners2[e] ??= []).push(cb) }, logger: { warn() {} } }
-  let called = 0
-  registerArchiver(ctx2, { enabled: true, audit: { append() { called++ } } })
-  listeners2['session/event'][0]({}, { type: 'compaction/summary', data: { summary: 'x' } })
-  assert.equal(called, 0, 'ACP 离线 → 不 append 不审计')
+  const auditRows2 = []
+  registerArchiver(ctx2, { enabled: true, audit: { append: (r) => auditRows2.push(r) } })
+  listeners2['session/event'][0]({}, { type: 'compaction/summary', data: { summary: 'x', compactionId: 'cid2' } })
+  assert.equal(auditRows2.length, 1, 'ACP 离线 → 审计仍留痕')
+  assert.equal(auditRows2[0].op, 'fold')
+  assert.deepEqual(auditRows2[0].archiveIds, [])
+  assert.match(auditRows2[0].detail, /acp 不可用/, 'detail 记录跳过原因')
 })
