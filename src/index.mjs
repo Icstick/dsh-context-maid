@@ -10,6 +10,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import path from 'node:path'
+import os from 'node:os'
 import { MaidCompactionEngine } from './engine.mjs'
 import { openMaidAudit } from './audit.mjs'
 import { registerMaidCommands } from './commands.mjs'
@@ -84,7 +85,7 @@ export function apply(ctx, config = {}) {
   }
 
   // 审计库 + 命令
-  const auditDir = config.auditDir || path.join(process.env.DSH_HOME || '', 'context-maid')
+  const auditDir = config.auditDir || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'context-maid')
   const audit = openMaidAudit(auditDir)
 
   // M3：归档——消费 compaction/summary → ACP ledger（摘要即证据；ACP 可选，离线跳过）
