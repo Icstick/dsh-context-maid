@@ -1,5 +1,7 @@
 # dsh-context-maid
 
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+
 DeepSeek Harness (dsh) 的**自动上下文策展**插件——帮你把越来越臃肿的上下文收拾干净：
 优先清掉工具输出和无效日志，保护正在进行的工作和你在意的重点，压缩前先把值得留的存进记忆。
 
