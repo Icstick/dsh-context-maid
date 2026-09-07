@@ -141,6 +141,8 @@ maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction�
 完整设计（五级策展模型、模块架构、配置全表、M1-M4 里程碑、测试计划）见
 [docs/dsh-context-maid-design.md](docs/dsh-context-maid-design.md)。
 
+仓库级开发计划与问题登记（backlog）：[docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md)。
+
 ## 开发
 
 ```bash
