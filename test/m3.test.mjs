@@ -7,11 +7,11 @@ import { summaryTextOf, registerArchiver, redactSecrets } from '../src/archiver.
 // —— pinner ——
 test('collectPinnedFacts：ACP 高 authority + work goal + extra 清单', async () => {
   const acp = {
-    query: async () => ({ items: [
-      { authority: 'user_explicit', content: '必须用 pnpm' },
-      { authority: 'user_correction', content: '不要用 yarn' },
-      { authority: 'single_observation', content: '普通观察不进 PIN' },
-      { authority: 'user_explicit', content: '必须用 pnpm' }, // 去重
+    queryObservations: async () => ({ items: [
+      { authority: 'user_explicit', text: '必须用 pnpm' },
+      { authority: 'user_correction', text: '不要用 yarn' },
+      { authority: 'single_observation', text: '普通观察不进 PIN' },
+      { authority: 'user_explicit', text: '必须用 pnpm' }, // 去重
     ] }),
   }
   const work = { get: () => ({ goal: '完成 maid M3' }) }

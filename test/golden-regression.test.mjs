@@ -72,14 +72,14 @@ test('CM4 归档/摘要必经 secret 红act（token/密码/PAT/JWT/私钥）', (
 // ---------- CM5：钉扎权威过滤 ----------
 test('CM5 钉扎只收高 authority 事实，agent 推断/外部信息不钉', async () => {
   const acp = {
-    query: async () => ({ items: [
-      { authority: 'user_explicit', content: '必须用 pnpm' },
-      { authority: 'user_correction', content: '不要用 yarn' },
-      { authority: 'system_policy', content: '会话预算上限 8000' },
-      { authority: 'agent_inference', content: '我猜用户喜欢 bun' },
-      { authority: 'external_information', content: 'npm 官网文档说…' },
-      { authority: 'single_observation', content: '看到 package.json 有 bun.lock' },
-      { authority: 'user_explicit', content: 'x'.repeat(600) }, // 超长不收
+    queryObservations: async () => ({ items: [
+      { authority: 'user_explicit', text: '必须用 pnpm' },
+      { authority: 'user_correction', text: '不要用 yarn' },
+      { authority: 'system_policy', text: '会话预算上限 8000' },
+      { authority: 'agent_inference', text: '我猜用户喜欢 bun' },
+      { authority: 'external_information', text: 'npm 官网文档说…' },
+      { authority: 'single_observation', text: '看到 package.json 有 bun.lock' },
+      { authority: 'user_explicit', text: 'x'.repeat(600) }, // 超长不收
     ] }),
   }
   const ctx = { get: (n) => (n === 'acp' ? acp : undefined) }

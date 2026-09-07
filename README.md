@@ -33,14 +33,14 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 
 | 能力 | 说明 |
 |---|---|
-| **内容分级策展** | 每个消息节点打标：钉扎 PIN / 保留 KEEP / 瘦身 SLIM / 清理 SWEEP / 压缩 FOLD |
-| **tool 输出瘦身** | 按内容类型感知截断：错误留尾、JSON 留骨架、日志留头尾（非固定 head/tail） |
-| **无效日志清理** | 僵尸消息、失败中间产物、被取代结果、孤儿 tool-call——确定性识别后移除 |
-| **工作流/记忆钉扎** | 用户明确要求、纠正、当前 goal 永不进有损压缩；压缩后仍注入（~150 token 兜底） |
-| **先归档后压缩** | 被清/被压内容先进 ACP ledger；压缩摘要本身成为一条带 supersedes 链的证据 |
-| **阈值用户可调** | trigger.userRatio 主旋钮（默认 0.40）；大 tool 输出落地即瘦身（不等总量阈值） |
-| **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点 |
-| **可观测** | 每次策展写审计：时间/类型/范围/token 前后/归档条目；/context-maid status 随时查 |
+| **接管官方压缩** | MaidCompactionEngine 继承 BasicCompactionEngine 注册为 ctx.compaction（须 disable 官方 compaction-basic）；阈值经 trigger.userRatio 映射官方 thresholdRatio，官方 pressure/overflow/manual 三路触发全保留 |
+| **压缩摘要增强** | 覆写官方 summarize：折叠前把高权威 PIN 事实注入摘要指令（软保护——官方压缩从头部压连续段，无法硬性排除中段）；摘要模型可配（便宜/本地/智能路由 resolver 链，回落官方） |
+| **tool 输出瘦身** | MaidSlimmer 继承官方 ToolResultPruner 注册为 ctx.toolResultPruner：错误留尾、JSON 留骨架、日志留头尾；**仅在官方折叠压力路径内触发**（无"落地即瘦身"监听） |
+| **清理扫描器** | sweeper 提供确定性扫描函数（僵尸消息/失败中间产物/孤儿 tool-call 识别产建议区间）；**执行器未接线**（sweep.enabled 默认 false，设计意图保留待实现） |
+| **先归档后压缩** | 折叠摘要经 ACP ledger 归档（agent_authored/single_observation/experience/private，sourceRef 含 compactionId）；归档为普通 observation，无 supersedes 链 |
+| **阈值用户可调** | trigger.userRatio 主旋钮（默认 0.40）映射官方 thresholdRatio；slim.thresholdChars/headChars/tailChars 可调 |
+| **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点（registerSummarizationResolver） |
+| **可观测** | 压缩（fold）写审计行；/context-maid status 查引擎/瘦身器接线与配置（slim/sweep/pin 审计写入待实现） |
 
 ## Agent 安装指南（面向自动化装配）
 
@@ -74,8 +74,7 @@ dsh plugin --profile <profile> add github:Icstick/dsh-context-maid
   name: dsh-context-maid
   config:
     auditDir: C:\path\to\context-maid   # 建议显式（默认 $DSH_HOME/context-maid）
-    trigger:
-      userRatio: 0.4        # 可选：触发阈值主旋钮
+    'trigger.userRatio': 0.4   # 可选：扁平点号键（schema 是扁平键，嵌套写法不生效）
 ```
 
 **4. 安装并重启**：停 dsh → profile 目录 `pnpm install` → 重启 dsh。
@@ -127,13 +126,13 @@ maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction�
 | 键 | 默认 | 说明 |
 |---|---|---|
 | trigger.userRatio | 0.4 | **主旋钮**：上下文阈值（占模型窗口比例）。映射官方 thresholdRatio，0.05-0.95 |
-| trigger.minTokens | 30000 | 低于此总 token 不触发 |
-| slim.thresholdChars | 4000 | tool 输出超过即内容感知瘦身 |
+| trigger.minTokens | 30000 | ⚠️ 未接线（保留）：低于此总 token 不触发暂无实现 |
+| slim.thresholdChars | 4000 | tool 输出超过即内容感知瘦身（官方折叠压力路径内触发） |
 | slim.headChars / tailChars | 800 / 800 | 瘦身保留预算 |
-| sweep.enabled / aggressive | true / false | 无效日志清理（aggressive 档待定） |
+| sweep.enabled / aggressive | false / false | ⚠️ 未接线（保留）：扫描函数存在，执行器待实现 |
 | fold.retainRatio | 0.16 | 压缩保留尾比例 |
-| pin.enabled / inject | true / true | 钉扎保护（M3） |
-| archive.enabled | true | 先归档后压缩（M3，需 ACP） |
+| pin.enabled / inject | true / false | 钉扎软保护（折叠摘要注入；pin.inject 逐轮注入未接线） |
+| archive.enabled | true | 先归档后压缩（需 ACP） |
 | summarization.provider / model | '' / '' | **摘要模型可配**（空=跟随对话模型；可填便宜模型或本地 OpenAI 兼容网关） |
 | auditDir | $DSH_HOME/context-maid | 审计库位置 |
 

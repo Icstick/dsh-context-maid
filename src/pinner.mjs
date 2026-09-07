@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 // src/pinner.mjs — 钉扎段：收集「必须保留」事实，注入摘要指令（软保护，M3）。
 //
 // spike 结论（2026-09-03）：官方压缩从头部压连续段，中段 PIN 无法硬性排除
@@ -7,6 +9,16 @@
 //   - PIN 来源：ACP 高 authority observation（可选服务）/ work_state goal（可选）/
 //     用户显式 pin.extra 清单
 // 硬保护（压缩范围排除 PIN 段）留作已知限制与未来工作。
+
+
+/** WC scopeIdForCwd 同语义派生（2026-09-07 P0-1：对齐 sha256(cwd 小写) 前 12 位，勿 import WC 内部） */
+export function scopeIdForCwd(cwd) {
+  if (!cwd || typeof cwd !== 'string') return 'user-global'
+  return 'ws:' + createHash('sha256').update(cwd.toLowerCase(), 'utf8').digest('hex').slice(0, 12)
+}
+
+/** PIN 权威白名单（2026-09-07 P0-1：本地二次防御，服务端 authorities 过滤之外的兜底） */
+const PIN_AUTHORITIES = new Set(['user_explicit', 'user_correction', 'system_policy'])
 
 /** 收集 PIN 事实文本（确定性；服务缺失自动跳过，不制造硬依赖）。 */
 export async function collectPinnedFacts(ctx, opts = {}) {
@@ -19,16 +31,23 @@ export async function collectPinnedFacts(ctx, opts = {}) {
   }
 
   // 1) ACP 高 authority observation（user_explicit / user_correction / system_policy）
+  // P0-1 修复（2026-09-07 审计）：旧实现调 acp.query——ACP 0.2.0 无此方法，typeof 守卫静默跳过，
+  // PIN 高权威源从未生效（golden CM5 用 mock acp.query 掩盖）。正解 = acp.queryObservations
+  // （service 面同日补齐，store.queryObservation 支持 authorities IN 过滤）。
   try {
     const acp = typeof ctx?.get === 'function' ? ctx.get('acp') : undefined
-    if (acp && typeof acp.query === 'function') {
-      const hits = await acp.query({ scopeId: opts.scopeId ?? 'user-global', limit: 15 })
-      for (const h of Array.isArray(hits?.items) ? hits.items : (Array.isArray(hits) ? hits : [])) {
+    if (acp && typeof acp.queryObservations === 'function') {
+      const hits = await acp.queryObservations({
+        scopeId: opts.scopeId ?? 'user-global',
+        state: 'active',
+        authorities: ['user_explicit', 'user_correction', 'system_policy'],
+        limit: 15,
+      })
+      for (const h of Array.isArray(hits?.items) ? hits.items : []) {
         const authority = h?.authority ?? ''
-        if (authority === 'user_explicit' || authority === 'user_correction' || authority === 'system_policy') {
-          const content = String(h?.content ?? h?.text ?? '').trim()
-          if (content && content.length <= 500) push('[ACP ' + authority + '] ' + content)
-        }
+        if (!PIN_AUTHORITIES.has(authority)) continue
+        const content = String(h?.text ?? '').trim()
+        if (content && content.length <= 500) push('[ACP ' + authority + '] ' + content)
       }
     }
   } catch { /* ACP 不可用/出错 → 跳过 */ }
@@ -38,7 +57,9 @@ export async function collectPinnedFacts(ctx, opts = {}) {
     const work = typeof ctx?.get === 'function' ? ctx.get('work') : undefined
     const cwd = opts.cwd ?? ''
     if (work && typeof work.get === 'function' && cwd) {
-      const st = work.get(cwd) // work.get(scopeId, projectId?) 位置参数
+      // P0-1（2026-09-07）：旧实现把原始 cwd 当 scopeId 传——WC 行存于 ws:+sha256(cwd) 前 12 位永不命中
+      const sid = scopeIdForCwd(cwd)
+      const st = work.get(sid) // work.get(scopeId, projectId?)
       if (st && typeof st.goal === 'string' && st.goal.trim()) push('[goal] ' + st.goal.trim())
     }
   } catch { /* work 不可用 → 跳过 */ }
