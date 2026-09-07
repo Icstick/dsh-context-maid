@@ -1,7 +1,7 @@
 {
   "name": "dsh-context-maid",
   "description": "自动上下文策展：tool 输出瘦身 + 无效日志清理 + 工作流/记忆钉扎保护 + 先归档后压缩",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "main": "./src/index.mjs",
   "exports": {
