@@ -302,6 +302,17 @@ sessionEventId 394607 + maidCompactionId。**归档链路端到端闭环。**
 **运维口**：/context-maid slim-now（手动全跑一次 eventSlim+sweep 并回报统计）；
 status 增加 cleanupTicks / pruner / eventSlim / sweep 诊断行。
 
+**sweep 实测（14:11-14:16 live）**：patch 开 sweep.enabled=true 后自动路径立即工作——
+会话历史遗留的同路径重复读取被逐个 superseded-read 处置（#238-241），实测序列
+（同路径 read ×2 + 失败 read → 成功重试）触发 superseded-read（#241）+ failed-retry（#242）；
+审计 op=sweep 落行（kind/reason/seq 溯源完整）。eventSlim 0 pruned（实测 read 均小体积）符合预期。
+**实测前修复**：superseded-read 收紧为仅路径键指纹触发（fp 含 '|'）——name-only 工具
+（run_code 等）同工具多次成功内容不同，误清前序会丢信息（+1 测试，53 全绿）。
+
+**0.3.0 live 验证总结**：FOLD（status 确认）/ eventSlim（21 pruned，-134712 chars）/
+sweep（自动 + 手动均处置）/ 审计闭环全部工作；集成问题 ×3 修复见上；运维口
+/context-maid slim-now + status 诊断行。
+
 ## 10. 参考
 
 - 本地：dsh-compaction-survey.md §5 扩展点 / §6 缺口 / §7 接口面
