@@ -61,7 +61,7 @@ export function redactSecrets(text) {
   if (typeof text !== 'string' || !text) return text
   let out = text
   // 键值对：保留 key 名，打码值（≥12 字符疑似凭据）
-  out = out.replace(/\b((?:sk|pk|api[_-]?key|token|secret|password|passwd|pwd|credential|bearer|private[_-]?key|access[_-]?key)\b\s*[:=]\s*['"]?)[A-Za-z0-9_\-]{12,}/gi, '$1[redacted]')
+  out = out.replace(/\b((?:sk|pk|api[_-]?key|token|secret|password|passwd|pwd|credential|bearer|private[_-]?key|access[_-]?key)\b\s*[:=]\s*['"]?)[A-Za-z0-9_-]{12,}/gi, '$1[redacted]')
   // 高熵 token 形态整体打码
   out = out.replace(/\bghp_[A-Za-z0-9]{20,}\b/g, '[redacted]')          // GitHub PAT
   out = out.replace(/\bgho_\w{20,}\b/g, '[redacted]')

@@ -64,25 +64,9 @@ test('MaidCompactionEngine 类可导入（不实例化——需 cordis ctx）', 
   assert.equal(typeof mod.toOfficialConfig, 'function')
 })
 
-test('命令装配：commands 就绪时注册 /context-maid', async (t) => {
-  const dir = freshDir(t)
+test('Config 默认值与 schema（不实例化——apply 需 cordis Service 环境）', async (t) => {
+  freshDir(t)
   const mod = await import('../src/index.mjs')
-  const listeners = {}
-  const registered = []
-  const ctx = {
-    get(name) {
-      if (name === 'commands') return { register: (d) => registered.push(d) }
-      if (name === 'compaction') return undefined
-      return undefined
-    },
-    on(evt, cb) { (listeners[evt] ??= []).push(cb); return () => {} },
-    provide() {},
-    inject() {},
-    effect() { return () => {} },
-    logger: { info() {}, warn() {}, error() {} },
-  }
-  // apply 会 new MaidCompactionEngine → 需要 cordis Service 环境；这里仅验证 apply 不因
-  // commands 缺失崩溃需要 mock——跳过真实 apply，改为验证 Config 与命令处理纯函数路径。
   const cfg = mod.Config()
   assert.equal(cfg['trigger.userRatio'], 0.4)
   assert.equal(cfg.enabled, true)

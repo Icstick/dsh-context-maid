@@ -1,7 +1,7 @@
 // src/commands.mjs — /context-maid 命令族：status / config / help
 //
 // M1：status（引擎提供者 + 阈值 + 近 7 天策展统计）与 config（当前生效配置）。
-// run/slim-now 等执行命令随对应里程碑（M2 sweeper/slimmer）加入。
+// 执行类命令暂不提供（sweep/slim 随官方折叠压力路径自动执行；0.3.0 M5/M6 落地后按需评估手动触发）。
 
 const USAGE = [
   'Usage: /context-maid <verb>',

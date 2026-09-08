@@ -10,7 +10,6 @@
 //  - 其它：回退官方策略
 
 import { ToolResultPruner } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
-import { codePointLength } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 
 /** 文本内容类型（确定性探测，不调 LLM） */
 export function detectContentType(text) {

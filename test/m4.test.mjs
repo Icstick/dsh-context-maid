@@ -10,14 +10,6 @@ test('COMPACTION_INSTRUCTION：8 节结构完整（同步官方模板）', () =>
   assert.ok(COMPACTION_INSTRUCTION.includes('<compacted-summary>'), '含旧 checkpoint 合并规则')
 })
 
-test('resolveSummarizationTarget：resolver 链 → maid 显式 → null', async () => {
-  // 通过子类实例测（不实例化官方引擎——用纯逻辑分离测试：直接构造轻量对象）
-  // MaidCompactionEngine 需要 cordis ctx（Service 构造），这里测其逻辑等价函数路径
-  const { resolveSummarizationTarget } = await import('../src/engine.mjs').catch(() => ({}))
-  // engine.mjs 导出的是类，测注册表逻辑需要 ctx——跳过实例化，验证 maidSummarizeWithLlm 模块导出
-  assert.ok(true) // 占位：实例化级测试在宿主集成（见 m4 集成说明）
-})
-
 test('maidSummarizeWithLlm 模块可加载（不调用——需 ctx.llm）', async () => {
   const mod = await import('../src/maid-summarizer.mjs')
   assert.equal(typeof mod.maidSummarizeWithLlm, 'function')
@@ -38,7 +30,7 @@ test('MaidCompactionEngine 实例：resolver 注册与目标解析链（mock ctx
   const listeners = {}
   const ctx = {
     reflect: { provide: (name, value) => { provided[name] = value; return async () => {} } },
-    get: (n) => undefined,
+    get: () => undefined,
     on: (evt, cb) => { (listeners[evt] ??= []).push(cb); return () => {} },
     logger: { info() {}, warn() {}, error() {} },
   }
@@ -46,7 +38,7 @@ test('MaidCompactionEngine 实例：resolver 注册与目标解析链（mock ctx
   // resolver 链：第一个不决策，第二个决策 → 应返回第二个
   const calls = []
   engine.registerSummarizationResolver(async () => { calls.push('r1'); return null })
-  engine.registerSummarizationResolver(async (_a, dflt) => { calls.push('r2'); return { provider: 'local-llm', model: 'qwen3.5' } })
+  engine.registerSummarizationResolver(async (_a) => { calls.push('r2'); return { provider: 'local-llm', model: 'qwen3.5' } })
   const out = await engine.resolveSummarizationTarget({ session: {} }, { provider: '', model: '' })
   assert.deepEqual(calls, ['r1', 'r2'])
   assert.equal(out.provider, 'local-llm')

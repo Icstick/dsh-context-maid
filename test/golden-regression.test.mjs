@@ -62,7 +62,7 @@ test('CM4 归档/摘要必经 secret 红act（token/密码/PAT/JWT/私钥）', (
   ]
   for (const c of cases) {
     const out = redactSecrets(c)
-    assert.ok(!/[A-Za-z0-9_\-]{16,}/.test(out.replace('[redacted]', '')), 'leak: ' + c)
+    assert.ok(!/[A-Za-z0-9_-]{16,}/.test(out.replace('[redacted]', '')), 'leak: ' + c)
     assert.ok(out.includes('[redacted]'), 'not redacted: ' + c)
   }
   // 普通文本不受影响
