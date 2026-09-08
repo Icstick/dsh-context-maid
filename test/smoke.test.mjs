@@ -15,10 +15,10 @@ test('Config 默认值符合设计（实例化验证）', async () => {
   const cfg = Config()
   assert.equal(cfg.enabled, true)
   assert.equal(cfg['trigger.userRatio'], 0.4)
-  assert.equal(cfg['trigger.minTokens'], 30000)
+  assert.equal(cfg['trigger.eventSlim'], true) // M5 落地即瘦身默认开
+  assert.equal(cfg['sweep.enabled'], false)
   assert.equal(cfg['sweep.aggressive'], false)
   assert.equal(cfg['summarization.provider'], '')
-  assert.equal(cfg['summarization.allowLocal'], true)
   assert.equal(cfg['pin.enabled'], true)
   assert.equal(cfg['archive.enabled'], true)
 })

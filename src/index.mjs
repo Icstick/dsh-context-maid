@@ -24,8 +24,6 @@ export const Config = z.object({
   enabled: z.boolean().default(true),
   // —— 触发（M1：userRatio 映射官方 thresholdRatio）——
   'trigger.userRatio': z.number().step(0.01).min(0.05).max(0.95).default(0.4),
-  // 未接线（2026-09-07 审计 P0-2）：minTokens 无消费方（官方阈值基于窗口比例）
-  'trigger.minTokens': z.number().step(1).min(0).default(30000), // 保留（设计意图）
   // M5（0.3.0）：eventSlim = 落地即瘦身——step 边界对新增超预算 tool/result 增量瘦身（默认开；阈值见 slim.*）
   'trigger.eventSlim': z.boolean().default(true),
   // —— 瘦身（M2）——
@@ -39,15 +37,12 @@ export const Config = z.object({
   'fold.retainRatio': z.number().step(0.01).min(0.01).max(0.9).default(0.16),
   // —— 钉扎（M3）——
   'pin.enabled': z.boolean().default(true),
-  // 未接线（2026-09-07 审计 P0-2）：无逐轮 PIN 注入；PIN 仅在折叠 summarize 调用内注入（engine.mjs）
-  'pin.inject': z.boolean().default(false), // 保留（设计意图），无消费方
   'pin.extra': z.array(z.string()).default([]), // 用户显式钉扎清单（如 ['必须用 pnpm']）
   // —— 归档（M3）——
   'archive.enabled': z.boolean().default(true),
   // —— 摘要模型（用户 2026-09-03：可配便宜/本地模型 + 智能路由端点）——
   'summarization.provider': z.string().default(''),
   'summarization.model': z.string().default(''),
-  'summarization.allowLocal': z.boolean().default(true), // 未接线（2026-09-07 审计 P0-2）
   // —— maid 自身 ——
   auditDir: z.string().default(''), // 空 → $DSH_HOME/context-maid（与 ACP ledger 同层）
   debug: z.boolean().default(false),

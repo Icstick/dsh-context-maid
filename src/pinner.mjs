@@ -71,13 +71,28 @@ export async function collectPinnedFacts(ctx, opts = {}) {
   return facts
 }
 
+/** PIN 指令预算（B10，2026-09-08 拍板：≤600 token ≈ 1800 字符 @3 chars/token）。
+ *  超出按收集顺序截断（收集顺序已按 authority 优先级稳定排序：
+ *  user_explicit/correction > system_policy > goal > extra），整条丢弃保语义完整，
+ *  追加 [+N more] 计数标注。 */
+export const PIN_BUDGET_CHARS = 1800
+
 /** 渲染成给摘要模型的 PIN 指令段（插在被压区域与官方压缩指令之间）。 */
-export function buildPinInstruction(facts) {
+export function buildPinInstruction(facts, budget = PIN_BUDGET_CHARS) {
   if (!facts || facts.length === 0) return ''
-  const list = facts.map((f) => '- ' + f).join('\n')
+  const kept = []
+  let total = 0
+  for (const f of facts) {
+    const item = '- ' + f
+    if (total + item.length > budget) break
+    kept.push(item)
+    total += item.length
+  }
+  const omitted = facts.length - kept.length
+  const list = omitted > 0 ? kept.concat(['- [+' + omitted + ' more facts omitted — PIN 预算 ' + budget + ' chars]']) : kept
   return '\n[context-maid pin] The following facts are pinned by the user or carry high authority. '
     + 'They MUST be reflected in the checkpoint summary (preserve their meaning and key details):\n'
-    + list
+    + list.join('\n')
 }
 
 export default { collectPinnedFacts, buildPinInstruction }

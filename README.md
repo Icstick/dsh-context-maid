@@ -131,7 +131,7 @@ maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction�
 | slim.headChars / tailChars | 800 / 800 | 瘦身保留预算 |
 | sweep.enabled / aggressive | false / false | 垃圾清扫（M6）：开启后 step 边界节流识别并 stub 结构性垃圾（aggressive 档规则未扩展，保留开关） |
 | fold.retainRatio | 0.16 | 压缩保留尾比例 |
-| pin.enabled / inject | true / false | 钉扎软保护（折叠摘要注入；pin.inject 逐轮注入未接线） |
+| pin.enabled / extra | true / [] | 钉扎软保护：折叠摘要注入高权威事实（M3）；逐轮注入由 ACP Composer 单轨承担（pin.inject 已删 0.3.0） |
 | archive.enabled | true | 先归档后压缩（需 ACP） |
 | summarization.provider / model | '' / '' | **摘要模型可配**（空=跟随对话模型；可填便宜模型或本地 OpenAI 兼容网关） |
 | auditDir | $DSH_HOME/context-maid | 审计库位置 |
