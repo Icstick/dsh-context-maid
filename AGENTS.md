@@ -16,7 +16,7 @@ dsh-context-maid：DeepSeek Harness 的自动上下文策展插件。五级策�
 - `src/archiver.mjs` —— 先归档后压缩（compaction/summary → ACP append；audit-first）
 - `src/audit.mjs` / `commands.mjs` —— 策展审计库 / /context-maid 命令（status/config/help）
 - `src/maid-summarizer.mjs` —— M4 摘要 LLM 调用（复刻官方调用语义 + resolver 链）
-- `test/*.test.mjs` —— node:test（m1-m4/smoke/golden-regression）
+- `test/*.test.mjs` —— node:test（m1-m7/smoke/golden-regression；m5=eventSlim、m6=sweep、m7=死键/PIN 预算）
 - `docs/` —— design.md（设计）、DEVELOPMENT-PLAN.md（backlog）、adr/（决策记录）
 - `cordis.patch.yml` —— bundle 装配补丁
 
