@@ -39,4 +39,5 @@
 - MAID-B3/B4（误导注释 + lint 清零）✅ C0 —— 8 warnings 归零
 - MAID-B7（sweep 执行器）✅ M6
 - MAID-B9（死键全景）✅ M7 —— 删除 trigger.minTokens / pin.inject / summarization.allowLocal（eventSlim 激活于 M5、sweep.* 激活于 M6）
-- MAID-B10（PIN 预算）✅ M7 —— buildPinInstruction ≤1800 字符（≈600 token）整条截断 + 计数，authority 优先级保留 —— scanSweepCandidates 真实事件模型重构（surface 视角 + callId 配对）+ stubToolResultNode（compaction/prune 协议）+ engine ② sweep 节流清扫 + op=sweep 审计；sweep.enabled 激活（aggressive 规则未扩展，保留开关）；48 测试全绿（0.3.0 设计稿 §4）
+- MAID-B10（PIN 预算）✅ M7
+- 0.3.0 实测（2026-09-08 live）✅ —— eventSlim 21 pruned/217 checked（-134712 chars），审计闭环；修复集成问题 ×3（private field/HMR、tokenMeter 注入、pre-step 节奏确认）；运维口 /context-maid slim-now + status 诊断行（详见 design.md §9.6） —— buildPinInstruction ≤1800 字符（≈600 token）整条截断 + 计数，authority 优先级保留 —— scanSweepCandidates 真实事件模型重构（surface 视角 + callId 配对）+ stubToolResultNode（compaction/prune 协议）+ engine ② sweep 节流清扫 + op=sweep 审计；sweep.enabled 激活（aggressive 规则未扩展，保留开关）；48 测试全绿（0.3.0 设计稿 §4）

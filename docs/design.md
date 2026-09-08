@@ -279,6 +279,29 @@ sensitivity=private / content=【maid 压缩归档】摘要 / source_ref 含
 sessionEventId 394607 + maidCompactionId。**归档链路端到端闭环。**
 
 
+## 9.6 实测记录（2026-09-08 live，0.3.0 eventSlim/sweep 落地验证）
+
+**验证方法**：会话内放超阈值 tool 输出探针（5966 chars）→ step 边界 → 查 maid.db 审计。
+手动命令 /context-maid slim-now（0.3.0 新增）作为验证/运维口。
+
+**实测结果**：eventSlim: 21 pruned / 217 checked（charsRemoved 134712）——
+审计 op=slim 落行（原 seq→副本 seq 溯源完整，如 5986→1639 chars）。端到端闭环。
+
+**发现与修复（三个集成级问题，单测未能覆盖——mock ctx 与真实 cordis 差异）**：
+1. **private field 与 HMR/原型替换失配**：engine 状态用 JS private field（#cleanupTicks 等），
+   运行时报 "Cannot read private member #cleanupTicks from an object whose class did not declare it"。
+   修复：状态字段改构造期普通属性（_x 前缀）——HMR/loader 原型替换下普通属性存实例上不受影响。
+2. **cordis Service 注入代理**：maid 直接 new Service 子类（M1 沿用，非 ctx.plugin 装配），
+   cordis 注入代理未绑定 inject 属性——this.ctx.tokenMeter 属性访问抛
+   "cannot get property tokenMeter without inject"（fail-open 吞错后 eventSlim 静默跳过）。
+   修复：getTokenMeter(ctx) 走 ctx.get('tokenMeter') 服务查找（与 toolResultPruner 同路径）；
+   MaidSlimmer 覆写 pruneSession（官方语义 + 安全 meter，官方实现内部属性访问无法覆写）。
+3. **pre-step 节奏**：agent/pre-step 在 web GUI 会话按 turn/step 边界触发（cleanupTicks 证实），
+   eventSlim 增量在每回合边界对新增超预算 tool 输出生效——与官方 FOLD 同节奏，符合设计 §5。
+
+**运维口**：/context-maid slim-now（手动全跑一次 eventSlim+sweep 并回报统计）；
+status 增加 cleanupTicks / pruner / eventSlim / sweep 诊断行。
+
 ## 10. 参考
 
 - 本地：dsh-compaction-survey.md §5 扩展点 / §6 缺口 / §7 接口面
