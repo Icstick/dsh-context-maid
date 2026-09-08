@@ -36,11 +36,11 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | **接管官方压缩** | MaidCompactionEngine 继承 BasicCompactionEngine 注册为 ctx.compaction（须 disable 官方 compaction-basic）；阈值经 trigger.userRatio 映射官方 thresholdRatio，官方 pressure/overflow/manual 三路触发全保留 |
 | **压缩摘要增强** | 覆写官方 summarize：折叠前把高权威 PIN 事实注入摘要指令（软保护——官方压缩从头部压连续段，无法硬性排除中段）；摘要模型可配（便宜/本地/智能路由 resolver 链，回落官方） |
 | **tool 输出瘦身** | MaidSlimmer 继承官方 ToolResultPruner 注册为 ctx.toolResultPruner：错误留尾、JSON 留骨架、日志留头尾；**eventSlim 落地即瘦身**（M5：每次 step 前对新增超预算 tool 结果增量瘦身，默认开）+ 官方折叠压力路径全量瘦身 |
-| **清理扫描器** | sweeper 提供确定性扫描函数（僵尸消息/失败中间产物/孤儿 tool-call 识别产建议区间）；**执行器未接线**（sweep.enabled 默认 false，设计意图保留待实现） |
+| **垃圾清扫（sweep）** | sweeper 确定性识别（M6：真实事件模型 + surface 视角）——同工具同参数重复读取/失败后重试成功的前序结果 → **model-free stub 整节点清理**（无 LLM）；sweep.enabled 默认 false，开启后 step 边界节流清扫 |
 | **先归档后压缩** | 折叠摘要经 ACP ledger 归档（agent_authored/single_observation/experience/private，sourceRef 含 compactionId）；归档为普通 observation，无 supersedes 链 |
 | **阈值用户可调** | trigger.userRatio 主旋钮（默认 0.40）映射官方 thresholdRatio；slim.thresholdChars/headChars/tailChars 可调 |
 | **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点（registerSummarizationResolver） |
-| **可观测** | 压缩（fold）与落地瘦身（slim）写审计行；/context-maid status 查引擎/瘦身器接线与配置（sweep/pin 审计待实现） |
+| **可观测** | 压缩（fold）/落地瘦身（slim）/垃圾清扫（sweep）写审计行；/context-maid status 查引擎/瘦身器接线与配置 |
 
 ## Agent 安装指南（面向自动化装配）
 
@@ -129,7 +129,7 @@ maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction�
 | trigger.eventSlim | true | **落地即瘦身**（M5）：step 边界对新增超预算 tool 结果增量瘦身；关掉 = 仅官方折叠压力路径内瘦身 |
 | slim.thresholdChars | 4000 | tool 输出超过即内容感知瘦身（eventSlim 与官方折叠压力路径） |
 | slim.headChars / tailChars | 800 / 800 | 瘦身保留预算 |
-| sweep.enabled / aggressive | false / false | ⚠️ 未接线（保留）：扫描函数存在，执行器待实现 |
+| sweep.enabled / aggressive | false / false | 垃圾清扫（M6）：开启后 step 边界节流识别并 stub 结构性垃圾（aggressive 档规则未扩展，保留开关） |
 | fold.retainRatio | 0.16 | 压缩保留尾比例 |
 | pin.enabled / inject | true / false | 钉扎软保护（折叠摘要注入；pin.inject 逐轮注入未接线） |
 | archive.enabled | true | 先归档后压缩（需 ACP） |

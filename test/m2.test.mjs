@@ -59,46 +59,78 @@ test('MaidSlimmer：错误类输出保留尾部（诊断信息）', async () => 
   assert.ok(text.includes('actual error detail'), '尾部错误细节保留')
 })
 
-// —— sweeper ——
-function mkEvent(type, seq, data = {}) {
-  return { type, seq, data: { ...data } }
+// —— sweeper（M6：真实事件模型 + surface 视角）——
+function fakeSession(events) {
+  const log = [...events]
+  return {
+    id: 'fake',
+    surface: { nodes: log.map((e) => e.seq) },
+    eventAt(seq) { return log.find((e) => e.seq === seq) },
+  }
+}
+
+/** assistant/message：内嵌 tool-call block（官方真实形状） */
+function callEvent(seq, id, name, args) {
+  return { seq, type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', id, name, arguments: JSON.stringify(args ?? {}) }] } } }
+}
+
+/** tool/result：message.source.callId 配对（官方真实形状） */
+function resultEvent(seq, callId, text) {
+  return { seq, type: 'tool/result', data: { message: { content: [{ type: 'tool-result', content: [{ type: 'text', text }] }], source: { callId } } } }
 }
 
 test('toolFingerprint：路径类参数入指纹，忽略大参数', () => {
-  const ev = mkEvent('tool/call', 1, { name: 'read_file', args: { file_path: 'C:/x/y.js', big: 'z'.repeat(5000) } })
-  const fp = toolFingerprint(ev)
+  const fp = toolFingerprint({ name: 'read_file', args: { file_path: 'C:/x/y.js', big: 'z'.repeat(5000) } })
   assert.ok(fp.includes('read_file'))
   assert.ok(fp.includes('C:/x/y.js'))
   assert.ok(!fp.includes('z'.repeat(100)), '大参数不入指纹')
+  // 同工具无路径参数 → 同指纹（后序结果取代前序的清理语义）
+  assert.equal(toolFingerprint({ name: 'list', args: {} }), toolFingerprint({ name: 'list', args: {} }))
+  // 未知/空 → 空指纹
+  assert.equal(toolFingerprint(null), '')
+  assert.equal(toolFingerprint({}), '')
 })
 
 test('scanSweepCandidates：同工具同参数重复读取 → 前序标记 superseded', () => {
-  const events = [
-    mkEvent('tool/call', 1, { name: 'read_file', args: { file_path: 'a.js' } }),
-    mkEvent('tool/result', 2, { name: 'read_file', args: { file_path: 'a.js' }, message: { content: [{ type: 'text', text: 'content v1' }] } }),
-    mkEvent('tool/call', 3, { name: 'read_file', args: { file_path: 'a.js' } }),
-    mkEvent('tool/result', 4, { name: 'read_file', args: { file_path: 'a.js' }, message: { content: [{ type: 'text', text: 'content v2' }] } }),
-  ]
-  const c = scanSweepCandidates(events)
+  const sess = fakeSession([
+    callEvent(1, 'c1', 'read', { file_path: 'a.js' }),
+    resultEvent(2, 'c1', 'content v1'),
+    callEvent(3, 'c2', 'read', { file_path: 'a.js' }),
+    resultEvent(4, 'c2', 'content v2'),
+  ])
+  const c = scanSweepCandidates(sess)
   const superseded = c.filter((x) => x.kind === 'superseded-read')
   assert.equal(superseded.length, 1)
-  assert.equal(superseded[0].startSeq, 2) // 前序 result 被清
+  assert.equal(superseded[0].seq, 2, '前序 result 被清')
 })
 
 test('scanSweepCandidates：失败→成功 同目标 → 失败结果标记 failed-retry', () => {
-  const events = [
-    mkEvent('tool/call', 1, { name: 'build', args: {} }),
-    mkEvent('tool/result', 2, { name: 'build', args: {}, message: { content: [{ type: 'text', text: 'error: build failed' }] } }),
-    mkEvent('tool/call', 3, { name: 'build', args: {} }),
-    mkEvent('tool/result', 4, { name: 'build', args: {}, message: { content: [{ type: 'text', text: 'build ok' }] } }),
-  ]
-  const c = scanSweepCandidates(events)
-  assert.ok(c.some((x) => x.kind === 'failed-retry' && x.startSeq === 2))
+  const sess = fakeSession([
+    callEvent(1, 'c1', 'build', {}),
+    resultEvent(2, 'c1', 'error: build failed'),
+    callEvent(3, 'c2', 'build', {}),
+    resultEvent(4, 'c2', 'build ok'),
+  ])
+  const c = scanSweepCandidates(sess)
+  assert.ok(c.some((x) => x.kind === 'failed-retry' && x.seq === 2))
+})
+
+test('scanSweepCandidates：读不同文件不误判；失败无后续成功不标记', () => {
+  const sess = fakeSession([
+    callEvent(1, 'c1', 'read', { file_path: 'a.ts' }),
+    resultEvent(2, 'c1', 'file a'),
+    callEvent(3, 'c2', 'read', { file_path: 'b.ts' }),
+    resultEvent(4, 'c2', 'file b'),
+    callEvent(5, 'c3', 'build', {}),
+    resultEvent(6, 'c3', 'error: boom'),
+  ])
+  const c = scanSweepCandidates(sess)
+  assert.equal(c.length, 0, '不同文件 + 未获成功的失败都不建议清理')
 })
 
 test('isFailureResult：错误特征识别', () => {
-  const ev = mkEvent('tool/result', 1, { message: { content: [{ type: 'text', text: 'Error: ENOENT no such file' }] } })
+  const ev = { type: 'tool/result', seq: 1, data: { message: { content: [{ type: 'text', text: 'Error: ENOENT no such file' }] } } }
   assert.equal(isFailureResult(ev), true)
-  const ok = mkEvent('tool/result', 2, { message: { content: [{ type: 'text', text: 'done successfully' }] } })
+  const ok = { type: 'tool/result', seq: 2, data: { message: { content: [{ type: 'text', text: 'done successfully' }] } } }
   assert.equal(isFailureResult(ok), false)
 })

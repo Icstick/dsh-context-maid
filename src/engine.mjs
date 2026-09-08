@@ -11,6 +11,8 @@
 import { randomUUID } from 'node:crypto'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
+import { scanSweepCandidates } from './sweeper.mjs'
+import { stubToolResultNode } from './slimmer.mjs'
 
 /**
  * 把 maid Config 映射为官方 BasicCompactionConfig 子集。
@@ -49,6 +51,9 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
 
   /** M5 eventSlim 增量游标：session → 已处理到的最大 seq（WeakMap 随会话生命周期回收） */
   #slimProgress = new WeakMap()
+
+  /** M6 sweep 节流：session → { turns, maxSeq }（距上次 sweep 的 step 数与 surface 尾部 seq） */
+  #sweepState = new WeakMap()
 
   /** M5 前置清理入口（eventSlim；M6 将在此加入 sweep）——在官方测压/折叠之前执行。
    *  设计稿 §3：model-free、无锁、幂等；失败只 warn 不阻断官方路径（fail-open）；
@@ -90,7 +95,47 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
       }
     }
-    return { eventSlim, sweep: null }
+    // ② sweep 清扫（sweep.enabled，默认 false；M6）
+    let sweep = null
+    if (maid['sweep.enabled'] === true) {
+      try {
+        const state = this.#sweepState.get(session) ?? { turns: 0, maxSeq: -1 }
+        state.turns += 1
+        const nodes = session.surface?.nodes
+        const maxSeq = Array.isArray(nodes) && nodes.length > 0 ? nodes[nodes.length - 1] : -1
+        const grown = maxSeq - state.maxSeq
+        // 节流：距上次 ≥12 step 或 surface 新增 ≥8 节点才全量扫描（O(surface) 控制在低频）
+        if (state.maxSeq < 0 || state.turns >= 12 || grown >= 8) {
+          state.turns = 0
+          // aggressive 规则未扩展（v1：保守档 superseded-read/failed-retry）；开关保留待后续
+          const candidates = scanSweepCandidates(session)
+          let swept = 0
+          let charsRemoved = 0
+          for (const c of candidates) {
+            try {
+              const out = stubToolResultNode(session, c.seq, c.kind, c.reason, {
+                meter: this.ctx?.tokenMeter,
+                onRow: (row) => this.#auditRow({ ...row, sessionId: session?.id ?? '' }, session),
+              })
+              if (out) {
+                swept += 1
+                charsRemoved += out.charsBefore
+              }
+            } catch (err) {
+              this.ctx?.logger?.warn?.('[context-maid] sweep stub failed on seq ' + c.seq + ': '
+                + (err instanceof Error ? err.message : String(err)))
+            }
+          }
+          state.maxSeq = maxSeq
+          sweep = { candidates: candidates.length, swept, charsRemoved }
+        }
+        this.#sweepState.set(session, state)
+      } catch (err) {
+        this.ctx?.logger?.warn?.('[context-maid] sweep failed: '
+          + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
+      }
+    }
+    return { eventSlim, sweep }
   }
 
   /** 审计落行（audit 由 index.apply 装配在 engine.maidAudit；审计失败不阻断） */

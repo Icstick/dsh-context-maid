@@ -198,4 +198,71 @@ export class MaidSlimmer extends ToolResultPruner {
   }
 }
 
+/**
+ * countTextChars：tool-result content blocks 文本总字符数（code point）。
+ * @param {readonly object[]} blocks
+ * @returns {number}
+ */
+export function countTextChars(blocks) {
+  let n = 0
+  if (!Array.isArray(blocks)) return n
+  for (const b of blocks) {
+    if (b?.type === 'text' && typeof b.text === 'string') n += Array.from(b.text).length
+  }
+  return n
+}
+
+/**
+ * M6 sweep 执行：把单个 tool/result 表面节点 stub 为一行标记（model-free）。
+ * 整段内容按结构性无价值处置（D1-A 拍板）；走官方 shadow-price 协议：
+ * compaction/prune 定价事件紧跟 tool/result replace（相邻契约），
+ * replace 保留 message envelope、source.callId 与 sourceEventSeqs 溯源。
+ * 与 incrementalSlim 的区别：sweep 不留头尾/骨架——整节点换 marker。
+ * @param {object} session - dsh Session
+ * @param {number} seq - 被处置的 tool/result 表面 seq
+ * @param {string} kind - sweep 类别（superseded-read / failed-retry）
+ * @param {string} reason - 人类可读原因（进入 stub 标记与审计）
+ * @param {object} [opts] - { meter?, onRow? } meter 提供 estimateMessage 定价；onRow 收审计行
+ * @returns {{replacementSeq: number, charsBefore: number}|null} 未处置返回 null
+ */
+export function stubToolResultNode(session, seq, kind, reason, opts = {}) {
+  const event = session.eventAt(seq)
+  if (!event || event.type !== 'tool/result') return null
+  const result = event.data?.message?.content?.[0]
+  if (!result) return null
+  const charsBefore = countTextChars(result.content)
+  const marker = '[maid sweep: ' + kind + ' —— ' + reason + ']'
+  const message = freezeMessage({
+    ...event.data.message,
+    content: [{
+      ...result,
+      content: [{ type: 'text', text: marker }],
+    }],
+  })
+  const meter = opts?.meter
+  session.append('compaction/prune', {
+    shadowedRange: { start: seq, end: seq },
+    shadowedSeqs: [seq],
+    shadowedTokenCount: typeof meter?.estimateMessage === 'function'
+      ? meter.estimateMessage(event.data.message)
+      : 0,
+  })
+  const replacement = session.append('tool/result', {
+    ...event.data,
+    message,
+  }, {
+    surfaceOp: { op: 'replace', start: seq, end: seq },
+    sourceEventSeqs: [seq],
+  })
+  opts?.onRow?.({
+    op: 'sweep',
+    range: seq + ':' + seq,
+    tokensBefore: charsBefore,
+    tokensAfter: marker.length,
+    summary: 'sweep ' + kind + '：seq ' + seq + '→' + replacement.seq,
+    detail: JSON.stringify({ kind, reason, originalSeq: seq, replacementSeq: replacement.seq, charsBefore }),
+  })
+  return { replacementSeq: replacement.seq, charsBefore }
+}
+
 export default MaidSlimmer

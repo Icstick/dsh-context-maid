@@ -11,7 +11,7 @@ dsh-context-maid：DeepSeek Harness 的自动上下文策展插件。五级策�
 - `src/index.mjs` —— 插件入口（Config 点号键、占用探测、引擎/瘦身器/审计/归档/命令装配）
 - `src/engine.mjs` —— MaidCompactionEngine extends BasicCompactionEngine（阈值映射 toOfficialConfig；summarize 覆写 = PIN 注入 + 智能路由 + 官方回落）
 - `src/slimmer.mjs` —— MaidSlimmer extends ToolResultPruner（内容感知瘦身）
-- `src/sweeper.mjs` —— 无效日志扫描**纯函数**（无执行器，未接线——README 已标注）
+- `src/sweeper.mjs` —— 垃圾清扫：scanSweepCandidates（真实事件模型 + surface 视角纯扫描）→ model-free stub（stubToolResultNode 在 slimmer.mjs）
 - `src/pinner.mjs` —— PIN 收集（ACP queryObservations 高权威 + WC goal + pin.extra）
 - `src/archiver.mjs` —— 先归档后压缩（compaction/summary → ACP append；audit-first）
 - `src/audit.mjs` / `commands.mjs` —— 策展审计库 / /context-maid 命令（status/config/help）
@@ -23,7 +23,7 @@ dsh-context-maid：DeepSeek Harness 的自动上下文策展插件。五级策�
 ## 铁律（违反会被打回）
 
 1. **官方引擎必须 disable**：cordis 同 key 服务单提供者——compaction-basic/tool-result-pruner 不禁用则 maid 自动旁路（防呆 warn）；README 装配说明与此一致。
-2. **未接线不宣称**：sweeper 无执行器、slim 仅在官方折叠压力路径内、pin.inject/minTokens 未接线——README/设计文档如实标注，不得夸大（P0-2 教训，golden CM 守护）。
+2. **未接线不宣称**：能力现状以 README 为准——已接线：FOLD 接管/SLIM（eventSlim + 折叠压力路径）/SWEEP（M6 model-free stub）/归档/PIN 摘要注入；未接线：pin.inject/minTokens 死键（M7 删除中）、sweep aggressive 规则未扩展——不得夸大（P0-2 教训，golden CM 守护）。
 3. **Config 键不进官方透传**：maid 自持键（点号键）不得进 toOfficialConfig（官方 validateKeys 拒未知键）；嵌套写法不生效，用扁平键。
 4. **审计 first**：策展事件无条件留痕（区分「事件未达」与「路径断开」）；归档走 ACP 时 block → 脱敏重试一次。
 5. **改代码必须补测试**：test/ 下同名 `.test.mjs`；golden regression 守护历史 issue。
