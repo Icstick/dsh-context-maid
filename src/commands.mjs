@@ -7,6 +7,7 @@ const USAGE = [
   'Usage: /context-maid <verb>',
   '  status         查看引擎提供者、阈值映射、近 7 天策展统计与最近记录',
   '  config         查看当前生效配置',
+  '  slim-now       手动执行一次前置清理（eventSlim 增量瘦身 + sweep 清扫；0.3.0 验证/诊断口）',
   '  help           本帮助',
 ].join('\n')
 
@@ -39,6 +40,7 @@ export function registerMaidCommands(ctx, deps) {
           const [verb] = raw.split(/\s+/)
           if (verb === 'status') return { kind: 'success', text: renderStatus(ctx, config, audit, getCompaction) }
           if (verb === 'config') return { kind: 'success', text: renderConfig(config) }
+          if (verb === 'slim-now') return runSlimNow(ctx, invocation, getCompaction)
           return { kind: 'success', text: USAGE }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -48,6 +50,30 @@ export function registerMaidCommands(ctx, deps) {
     })
     ctx.logger?.info?.('[context-maid] /context-maid command registered')
   })
+}
+
+/** 手动前置清理（0.3.0 诊断/验证口）：eventSlim + sweep 全跑一次并回报统计。 */
+async function runSlimNow(ctx, invocation, getCompaction) {
+  try {
+    const comp = getCompaction()
+    if (!comp || typeof comp.runPreCleanup !== 'function') {
+      return { kind: 'error', text: 'context-maid: 引擎未接管（runPreCleanup 不可用）——engine 旁路或 maid 0.3.0 未加载' }
+    }
+    const agent = invocation?.agent
+    if (!agent?.session) {
+      return { kind: 'error', text: 'context-maid: 无法解析当前会话（invocation.agent.session 缺失）' }
+    }
+    const out = await comp.runPreCleanup(agent)
+    const es = out?.eventSlim
+    const sw = out?.sweep
+    const lines = ['[context-maid] slim-now 完成']
+    lines.push('eventSlim: ' + (es ? es.pruned + ' pruned / ' + es.processed + ' checked（charsRemoved ' + es.charsRemoved + '）' : '跳过（未启用或无 pruner）'))
+    lines.push('sweep: ' + (sw ? sw.swept + ' swept / ' + sw.candidates + ' candidates（charsRemoved ' + sw.charsRemoved + '）' : '跳过（未启用或节流中）'))
+    return { kind: 'success', text: lines.join('\n') }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { kind: 'error', text: 'context-maid slim-now error: ' + message }
+  }
 }
 
 function renderConfig(config) {
