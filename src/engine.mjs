@@ -100,8 +100,9 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           }
         }
       } catch (err) {
-        this.ctx?.logger?.warn?.('[context-maid] eventSlim failed: '
-          + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
+        const msg = (err instanceof Error ? err.message : String(err))
+        this.ctx?.logger?.warn?.('[context-maid] eventSlim failed: ' + msg + '——继续官方路径')
+        eventSlim = { error: msg } // 暴露给 slim-now/status 诊断（fail-open 语义不变）
       }
     }
     // ② sweep 清扫（sweep.enabled，默认 false；M6）
@@ -140,8 +141,9 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
         }
         this._sweepState.set(session, state)
       } catch (err) {
-        this.ctx?.logger?.warn?.('[context-maid] sweep failed: '
-          + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
+        const msg = (err instanceof Error ? err.message : String(err))
+        this.ctx?.logger?.warn?.('[context-maid] sweep failed: ' + msg + '——继续官方路径')
+        sweep = { error: msg }
       }
     }
     const out = { eventSlim, sweep }
