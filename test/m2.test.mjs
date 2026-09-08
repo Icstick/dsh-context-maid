@@ -115,6 +115,16 @@ test('scanSweepCandidates：失败→成功 同目标 → 失败结果标记 fai
   assert.ok(c.some((x) => x.kind === 'failed-retry' && x.seq === 2))
 })
 
+test('scanSweepCandidates：无路径键工具（name-only 指纹）重复成功不清前序', () => {
+  const sess = fakeSession([
+    callEvent(1, 'c1', 'run_code', { code: 'task A' }),
+    resultEvent(2, 'c1', 'A 的输出'),
+    callEvent(3, 'c2', 'run_code', { code: 'task B' }),
+    resultEvent(4, 'c2', 'B 的输出'),
+  ])
+  assert.equal(scanSweepCandidates(sess).length, 0, '内容不同仅同工具名 → 不清（2026-09-08 收紧）')
+})
+
 test('scanSweepCandidates：读不同文件不误判；失败无后续成功不标记', () => {
   const sess = fakeSession([
     callEvent(1, 'c1', 'read', { file_path: 'a.ts' }),

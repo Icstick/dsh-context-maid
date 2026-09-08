@@ -125,9 +125,12 @@ export function scanSweepCandidates(session) {
           }
           failures.delete(fp)
         }
-        // superseded-read：同 fp 已有成功 → 前序成功可清
+        // superseded-read：同 fp 已有成功 → 前序成功可清。
+        // 2026-09-08 收紧：仅「路径键指纹」（fp 含 '|'，如 read|file_path=a.ts）才触发——
+        // name-only 指纹（无路径参数的工具，如 run_code）会把同工具全部历史成功结果误判
+        // 为重复读取（每轮内容不同，前序仍有价值），实测前修复。
         const prev = lastSuccess.get(fp)
-        if (prev !== undefined && prev !== seq) {
+        if (prev !== undefined && prev !== seq && fp.includes('|')) {
           const prevEv = session.eventAt(prev)
           if (prevEv?.type === 'tool/result' && !isMaidMarked(extractResultText(prevEv))) {
             suggest(prev, 'superseded-read', '同工具同参数前序结果已被后序取代')
