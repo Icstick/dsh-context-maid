@@ -67,8 +67,8 @@ async function runSlimNow(ctx, invocation, getCompaction) {
     const es = out?.eventSlim
     const sw = out?.sweep
     const lines = ['[context-maid] slim-now 完成']
-    lines.push('eventSlim: ' + (es ? es.pruned + ' pruned / ' + es.processed + ' checked（charsRemoved ' + es.charsRemoved + '）' : '跳过（未启用或无 pruner）'))
-    lines.push('sweep: ' + (sw ? sw.swept + ' swept / ' + sw.candidates + ' candidates（charsRemoved ' + sw.charsRemoved + '）' : '跳过（未启用或节流中）'))
+    lines.push('eventSlim: ' + (es?.error ? 'ERROR: ' + es.error : es ? es.pruned + ' pruned / ' + es.processed + ' checked（charsRemoved ' + es.charsRemoved + '）' : '跳过（未启用或无 pruner）'))
+    lines.push('sweep: ' + (sw?.error ? 'ERROR: ' + sw.error : sw ? sw.swept + ' swept / ' + sw.candidates + ' candidates（charsRemoved ' + sw.charsRemoved + '）' : '跳过（未启用或节流中）'))
     return { kind: 'success', text: lines.join('\n') }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
