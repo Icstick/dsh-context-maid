@@ -95,7 +95,7 @@ export class MaidSlimmer extends ToolResultPruner {
    * @returns {{processed: number, pruned: number, charsRemoved: number, maxSeen: number}}
    */
   incrementalSlim(session, fromSeq = -1, onRow) {
-    const meter = this.ctx?.tokenMeter
+    const meter = getTokenMeter(this.ctx)
     let processed = 0
     let handled = 0
     let charsRemoved = 0
@@ -156,6 +156,66 @@ export class MaidSlimmer extends ToolResultPruner {
   }
 
   /**
+   * 覆写官方 pruneSession（2026-09-08 实测修复）：官方实现内部 this.ctx.tokenMeter
+   * 属性访问依赖 cordis 框架注入——maid 直接 new 装配无注入 → 真实会话抛
+   * "cannot get property tokenMeter without inject"。本覆写等价官方语义
+   * （surface tool/result 全量扫描 + compaction/prune 定价 + replace），
+   * meter 改经 getTokenMeter 安全获取（缺失时定价记 0，处置不中断）。
+   * @param {object} session - dsh Session
+   * @returns {{pruned: object[], charsRemoved: number}}
+   */
+  pruneSession(session) {
+    const meter = getTokenMeter(this.ctx)
+    const candidates = []
+    for (const seq of Array.from(session.surface.nodes)) {
+      const event = session.eventAt(seq)
+      if (event?.type === 'tool/result') candidates.push({ seq, event })
+    }
+    const pruned = []
+    let charsRemoved = 0
+    for (const { seq, event } of candidates) {
+      const result = event.data.message.content[0]
+      let content = null
+      try {
+        content = this.pruneContent(result.content)
+      } catch { continue }
+      if (content === null) continue
+      const charsBefore = this.measureContent(result.content)
+      const charsAfter = this.measureContent(content)
+      const message = freezeMessage({
+        ...event.data.message,
+        content: [{
+          ...result,
+          content,
+        }],
+      })
+      session.append('compaction/prune', {
+        shadowedRange: { start: seq, end: seq },
+        shadowedSeqs: [seq],
+        shadowedTokenCount: typeof meter?.estimateMessage === 'function'
+          ? meter.estimateMessage(event.data.message)
+          : 0,
+      })
+      const replacement = session.append('tool/result', {
+        ...event.data,
+        message,
+      }, {
+        surfaceOp: { op: 'replace', start: seq, end: seq },
+        sourceEventSeqs: [seq],
+      })
+      pruned.push({
+        originalSeq: seq,
+        replacementSeq: replacement.seq,
+        callId: event.data.message.source?.callId,
+        charsBefore,
+        charsAfter,
+      })
+      charsRemoved += charsBefore - charsAfter
+    }
+    return { pruned, charsRemoved }
+  }
+
+  /**
    * 覆写：内容感知截断。
    * @param {readonly import('@deepseek-ai/dsh-llm').ContentBlock[]} blocks
    * @returns {import('@deepseek-ai/dsh-llm').ContentBlock[]|null}
@@ -196,6 +256,25 @@ export class MaidSlimmer extends ToolResultPruner {
     // plain / 其它 → 官方策略
     return super.pruneContent(blocks)
   }
+}
+
+/**
+ * 安全获取 tokenMeter（cordis 注入兼容，2026-09-08 实测修复）：
+ * maid 直接 new Service 子类（非 ctx.plugin 装配）时 cordis 的注入代理未绑定
+ * inject 属性——this.ctx.tokenMeter 属性访问抛 "cannot get property without inject"。
+ * 服务查找 ctx.get('tokenMeter') 不受注入代理限制（与 ctx.get('toolResultPruner') 同路径）。
+ * @param {object} ctx - cordis Context
+ * @returns {object|undefined}
+ */
+export function getTokenMeter(ctx) {
+  if (!ctx) return undefined
+  try {
+    if (typeof ctx.get === 'function') {
+      const m = ctx.get('tokenMeter')
+      if (m) return m
+    }
+  } catch { /* 继续下一路 */ }
+  try { return ctx.tokenMeter } catch { return undefined }
 }
 
 /**

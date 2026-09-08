@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 import { scanSweepCandidates } from './sweeper.mjs'
-import { stubToolResultNode } from './slimmer.mjs'
+import { stubToolResultNode, getTokenMeter } from './slimmer.mjs'
 
 /**
  * 把 maid Config 映射为官方 BasicCompactionConfig 子集。
@@ -124,7 +124,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           for (const c of candidates) {
             try {
               const out = stubToolResultNode(session, c.seq, c.kind, c.reason, {
-                meter: this.ctx?.tokenMeter,
+                meter: getTokenMeter(this.ctx),
                 onRow: (row) => this._auditRow({ ...row, sessionId: session?.id ?? '' }, session),
               })
               if (out) {
