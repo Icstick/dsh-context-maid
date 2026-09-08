@@ -75,6 +75,25 @@ function renderStatus(ctx, config, audit, getCompaction) {
   lines.push('engine: ' + engineNote)
   lines.push('userRatio: ' + config['trigger.userRatio'] + '（→ 官方 thresholdRatio）')
   lines.push('enabled: ' + config.enabled)
+  // 0.3.0 诊断：引擎清理 tick + pruner 提供者
+  try {
+    const comp = getCompaction()
+    if (comp && typeof comp.cleanupStats === 'function') {
+      const st = comp.cleanupStats()
+      lines.push('cleanupTicks: ' + st.ticks + (st.lastAt ? '（last ' + new Date(st.lastAt).toISOString().slice(11, 19) + ' UTC）' : '') + ' eventSlim=' + config['trigger.eventSlim'] + ' sweep=' + (config['sweep.enabled'] === true))
+      if (st.lastResult && (st.lastResult.eventSlim || st.lastResult.sweep)) {
+        const es = st.lastResult.eventSlim
+        const sw = st.lastResult.sweep
+        lines.push('lastCleanup: slim=' + (es ? es.pruned + ' pruned/' + es.processed + ' checked' : 'skip') + ' sweep=' + (sw ? sw.swept + ' swept/' + sw.candidates + ' cand' : 'skip'))
+      }
+    }
+    let prunerNote = '未探测'
+    try {
+      const p = ctx.get('toolResultPruner')
+      prunerNote = p ? (p.constructor?.name || '实例') : '无（toolResultPruner 未注册）'
+    } catch { prunerNote = '解析失败' }
+    lines.push('pruner: ' + prunerNote)
+  } catch { /* 诊断失败不阻断 */ }
 
   let stats = []
   try { stats = typeof audit?.stats === 'function' ? audit.stats(7) : [] } catch {}

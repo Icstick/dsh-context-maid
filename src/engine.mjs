@@ -55,6 +55,11 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
   /** M6 sweep 节流：session → { turns, maxSeq }（距上次 sweep 的 step 数与 surface 尾部 seq） */
   #sweepState = new WeakMap()
 
+  /** 诊断：runPreCleanup 调用统计（0.3.0 实测用；status 命令展示） */
+  #cleanupTicks = 0
+  #cleanupLastAt = null
+  #cleanupLastResult = null
+
   /** M5 前置清理入口（eventSlim；M6 将在此加入 sweep）——在官方测压/折叠之前执行。
    *  设计稿 §3：model-free、无锁、幂等；失败只 warn 不阻断官方路径（fail-open）；
    *  无模型信息（resolveModelInfo 失败）时官方永不清理的缺口在此被补上。 */
@@ -62,6 +67,8 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     const maid = this.maidConfig ?? {}
     const session = agent?.session
     if (!session) return { eventSlim: null, sweep: null }
+    this.#cleanupTicks += 1
+    this.#cleanupLastAt = Date.now()
     // ① eventSlim 增量瘦身（trigger.eventSlim，默认 true）
     let eventSlim = null
     if (maid['trigger.eventSlim'] !== false) {
@@ -135,7 +142,9 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
       }
     }
-    return { eventSlim, sweep }
+    const out = { eventSlim, sweep }
+    this.#cleanupLastResult = out
+    return out
   }
 
   /** 审计落行（audit 由 index.apply 装配在 engine.maidAudit；审计失败不阻断） */
@@ -254,6 +263,15 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     }
     if (defaultTarget && defaultTarget.provider && defaultTarget.model) return defaultTarget
     return null
+  }
+
+  /** 诊断统计（status 命令展示）：compactIfNeeded/runPreCleanup 被调次数与最近结果 */
+  cleanupStats() {
+    return {
+      ticks: this.#cleanupTicks,
+      lastAt: this.#cleanupLastAt,
+      lastResult: this.#cleanupLastResult,
+    }
   }
 }
 
