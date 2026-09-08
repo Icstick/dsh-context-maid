@@ -47,18 +47,20 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
   constructor(ctx, maidConfig = {}) {
     super(ctx, toOfficialConfig(maidConfig))
     this.maidConfig = maidConfig
+    this._slimProgress = new WeakMap()
+    this._sweepState = new WeakMap()
+    this._cleanupTicks = 0
+    this._cleanupLastAt = null
+    this._cleanupLastResult = null
+    this._resolvers = []
   }
 
-  /** M5 eventSlim 增量游标：session → 已处理到的最大 seq（WeakMap 随会话生命周期回收） */
-  #slimProgress = new WeakMap()
-
-  /** M6 sweep 节流：session → { turns, maxSeq }（距上次 sweep 的 step 数与 surface 尾部 seq） */
-  #sweepState = new WeakMap()
-
-  /** 诊断：runPreCleanup 调用统计（0.3.0 实测用；status 命令展示） */
-  #cleanupTicks = 0
-  #cleanupLastAt = null
-  #cleanupLastResult = null
+  // 状态字段全部用构造期普通属性（_x 前缀）而非 JS private field——
+  // 原因（2026-09-08 实测）：cordis-plugin-hmr/loader 原型替换下 private field 槽位
+  // 与新类方法失配（"Cannot read private member #cleanupTicks"），普通属性存实例上不受影响。
+  // M5 eventSlim 增量游标：session → 已处理到的最大 seq（WeakMap 随会话生命周期回收）
+  // M6 sweep 节流：session → { turns, maxSeq }
+  // 诊断：runPreCleanup 调用统计（status/slim-now 展示）
 
   /** M5 前置清理入口（eventSlim；M6 将在此加入 sweep）——在官方测压/折叠之前执行。
    *  设计稿 §3：model-free、无锁、幂等；失败只 warn 不阻断官方路径（fail-open）；
@@ -67,23 +69,23 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     const maid = this.maidConfig ?? {}
     const session = agent?.session
     if (!session) return { eventSlim: null, sweep: null }
-    this.#cleanupTicks += 1
-    this.#cleanupLastAt = Date.now()
+    this._cleanupTicks += 1
+    this._cleanupLastAt = Date.now()
     // ① eventSlim 增量瘦身（trigger.eventSlim，默认 true）
     let eventSlim = null
     if (maid['trigger.eventSlim'] !== false) {
       try {
         const pruner = typeof this.ctx?.get === 'function' ? this.ctx.get('toolResultPruner') : undefined
         if (pruner && typeof pruner.pruneSession === 'function') {
-          const fromSeq = this.#slimProgress.get(session) ?? -1
+          const fromSeq = this._slimProgress.get(session) ?? -1
           if (typeof pruner.incrementalSlim === 'function') {
-            eventSlim = pruner.incrementalSlim(session, fromSeq, (row) => this.#auditRow(row, session))
+            eventSlim = pruner.incrementalSlim(session, fromSeq, (row) => this._auditRow(row, session))
           } else {
             // 官方 pruner（maid slimmer 未接管）→ 全量退化（官方语义幂等）
             const out = pruner.pruneSession(session)
             eventSlim = out
             if (Array.isArray(out?.pruned) && out.pruned.length > 0) {
-              this.#auditRow({
+              this._auditRow({
                 op: 'slim',
                 summary: 'eventSlim（官方 pruner 全量退化）：' + out.pruned.length + ' 节点瘦身',
                 detail: JSON.stringify({ kind: 'event-slim-fallback', pruned: out.pruned.length }),
@@ -94,7 +96,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           const nodes = session.surface?.nodes
           if (Array.isArray(nodes) && nodes.length > 0) {
             const maxSeq = Math.max(nodes[nodes.length - 1], eventSlim?.maxSeen ?? -1)
-            this.#slimProgress.set(session, maxSeq)
+            this._slimProgress.set(session, maxSeq)
           }
         }
       } catch (err) {
@@ -106,7 +108,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     let sweep = null
     if (maid['sweep.enabled'] === true) {
       try {
-        const state = this.#sweepState.get(session) ?? { turns: 0, maxSeq: -1 }
+        const state = this._sweepState.get(session) ?? { turns: 0, maxSeq: -1 }
         state.turns += 1
         const nodes = session.surface?.nodes
         const maxSeq = Array.isArray(nodes) && nodes.length > 0 ? nodes[nodes.length - 1] : -1
@@ -122,7 +124,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
             try {
               const out = stubToolResultNode(session, c.seq, c.kind, c.reason, {
                 meter: this.ctx?.tokenMeter,
-                onRow: (row) => this.#auditRow({ ...row, sessionId: session?.id ?? '' }, session),
+                onRow: (row) => this._auditRow({ ...row, sessionId: session?.id ?? '' }, session),
               })
               if (out) {
                 swept += 1
@@ -136,19 +138,19 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           state.maxSeq = maxSeq
           sweep = { candidates: candidates.length, swept, charsRemoved }
         }
-        this.#sweepState.set(session, state)
+        this._sweepState.set(session, state)
       } catch (err) {
         this.ctx?.logger?.warn?.('[context-maid] sweep failed: '
           + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
       }
     }
     const out = { eventSlim, sweep }
-    this.#cleanupLastResult = out
+    this._cleanupLastResult = out
     return out
   }
 
   /** 审计落行（audit 由 index.apply 装配在 engine.maidAudit；审计失败不阻断） */
-  #auditRow(row, session) {
+  _auditRow(row, session) {
     try {
       this.maidAudit?.append?.({ ...row, sessionId: session?.id ?? '' })
     } catch { /* 审计失败不阻断策展 */ }
@@ -232,8 +234,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     return super.compactIfNeeded(agent, trigger, signal)
   }
 
-  /** 智能路由解析器注册表（外部插件接入点） */
-  #resolvers = []
+  /** 智能路由解析器注册表（外部插件接入点）——见 constructor _resolvers */
 
   /**
    * 注册摘要目标解析器。解析器签名：
@@ -244,13 +245,13 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
    */
   registerSummarizationResolver(fn) {
     if (typeof fn !== 'function') throw new TypeError('registerSummarizationResolver: fn must be a function')
-    this.#resolvers.push(fn)
-    return () => { this.#resolvers = this.#resolvers.filter((f) => f !== fn) }
+    this._resolvers.push(fn)
+    return () => { this._resolvers = this._resolvers.filter((f) => f !== fn) }
   }
 
   /** 依次询问注册的 resolver；全不决策返回 maid Config 显式目标或 null。 */
   async resolveSummarizationTarget(agent, defaultTarget) {
-    for (const fn of this.#resolvers) {
+    for (const fn of this._resolvers) {
       try {
         const out = await fn(agent, defaultTarget)
         if (out && typeof out.provider === 'string' && out.provider && typeof out.model === 'string' && out.model) {
@@ -268,9 +269,9 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
   /** 诊断统计（status 命令展示）：compactIfNeeded/runPreCleanup 被调次数与最近结果 */
   cleanupStats() {
     return {
-      ticks: this.#cleanupTicks,
-      lastAt: this.#cleanupLastAt,
-      lastResult: this.#cleanupLastResult,
+      ticks: this._cleanupTicks,
+      lastAt: this._cleanupLastAt,
+      lastResult: this._cleanupLastResult,
     }
   }
 }
