@@ -47,6 +47,59 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     this.maidConfig = maidConfig
   }
 
+  /** M5 eventSlim 增量游标：session → 已处理到的最大 seq（WeakMap 随会话生命周期回收） */
+  #slimProgress = new WeakMap()
+
+  /** M5 前置清理入口（eventSlim；M6 将在此加入 sweep）——在官方测压/折叠之前执行。
+   *  设计稿 §3：model-free、无锁、幂等；失败只 warn 不阻断官方路径（fail-open）；
+   *  无模型信息（resolveModelInfo 失败）时官方永不清理的缺口在此被补上。 */
+  async runPreCleanup(agent) {
+    const maid = this.maidConfig ?? {}
+    const session = agent?.session
+    if (!session) return { eventSlim: null, sweep: null }
+    // ① eventSlim 增量瘦身（trigger.eventSlim，默认 true）
+    let eventSlim = null
+    if (maid['trigger.eventSlim'] !== false) {
+      try {
+        const pruner = typeof this.ctx?.get === 'function' ? this.ctx.get('toolResultPruner') : undefined
+        if (pruner && typeof pruner.pruneSession === 'function') {
+          const fromSeq = this.#slimProgress.get(session) ?? -1
+          if (typeof pruner.incrementalSlim === 'function') {
+            eventSlim = pruner.incrementalSlim(session, fromSeq, (row) => this.#auditRow(row, session))
+          } else {
+            // 官方 pruner（maid slimmer 未接管）→ 全量退化（官方语义幂等）
+            const out = pruner.pruneSession(session)
+            eventSlim = out
+            if (Array.isArray(out?.pruned) && out.pruned.length > 0) {
+              this.#auditRow({
+                op: 'slim',
+                summary: 'eventSlim（官方 pruner 全量退化）：' + out.pruned.length + ' 节点瘦身',
+                detail: JSON.stringify({ kind: 'event-slim-fallback', pruned: out.pruned.length }),
+              }, session)
+            }
+          }
+          // 推进游标到当前 surface 最大 seq
+          const nodes = session.surface?.nodes
+          if (Array.isArray(nodes) && nodes.length > 0) {
+            const maxSeq = Math.max(nodes[nodes.length - 1], eventSlim?.maxSeen ?? -1)
+            this.#slimProgress.set(session, maxSeq)
+          }
+        }
+      } catch (err) {
+        this.ctx?.logger?.warn?.('[context-maid] eventSlim failed: '
+          + (err instanceof Error ? err.message : String(err)) + '——继续官方路径')
+      }
+    }
+    return { eventSlim, sweep: null }
+  }
+
+  /** 审计落行（audit 由 index.apply 装配在 engine.maidAudit；审计失败不阻断） */
+  #auditRow(row, session) {
+    try {
+      this.maidAudit?.append?.({ ...row, sessionId: session?.id ?? '' })
+    } catch { /* 审计失败不阻断策展 */ }
+  }
+
   /**
    * M3+M4：覆写官方唯一子类钩子——PIN 注入 + 智能路由摘要。
    * 目标解析链：
@@ -105,6 +158,24 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     }
     // 回落：官方路径（maid 显式配置经 toOfficialConfig 已映射 summarizationProvider/Model）
     return super.summarize({ ...input, messages }, agent, signal)
+  }
+
+  /**
+   * M5 覆写官方自动入口：先 runPreCleanup（eventSlim 增量瘦身），再走官方逻辑。
+   * agent/pre-step 动态派发 → maid 覆写即成为每次 step 的入口；官方
+   * pressure/overflow 触发与折叠事务语义全部保留在 super。
+   * @param {object} agent - Agent
+   * @param {'pressure'|'context-overflow'} trigger - 官方触发类型
+   * @param {AbortSignal} signal
+   */
+  async compactIfNeeded(agent, trigger, signal) {
+    try {
+      await this.runPreCleanup(agent)
+    } catch (err) {
+      this.ctx?.logger?.warn?.('[context-maid] runPreCleanup failed: '
+        + (err instanceof Error ? err.message : String(err)))
+    }
+    return super.compactIfNeeded(agent, trigger, signal)
   }
 
   /** 智能路由解析器注册表（外部插件接入点） */

@@ -10,6 +10,7 @@
 //  - 其它：回退官方策略
 
 import { ToolResultPruner } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
+import { freezeMessage } from '@deepseek-ai/dsh-llm'
 
 /** 文本内容类型（确定性探测，不调 LLM） */
 export function detectContentType(text) {
@@ -81,6 +82,77 @@ export class MaidSlimmer extends ToolResultPruner {
   /** JSON 骨架保留上限（字符） */
   get jsonBudget() {
     return Math.max(300, this.config.headChars + this.config.tailChars)
+  }
+
+  /**
+   * M5 eventSlim：增量落地瘦身——只处理 seq > fromSeq 的新 tool/result 节点。
+   * 设计稿 §5：在 step 边界（agent/pre-step）调用；幂等（已瘦节点不再超预算）。
+   * 落地协议与官方 pruneSession 一致：compaction/prune 定价事件紧跟 replace
+   * （相邻性是契约），replace 保留 message envelope 与 sourceEventSeqs 溯源。
+   * @param {object} session - dsh Session（surface.nodes / eventAt / append）
+   * @param {number} fromSeq - 上次处理到的最大 seq（含）；新节点 = seq > fromSeq
+   * @param {(row: object) => void} [onRow] - 每处置一个节点回调审计行（op=slim）
+   * @returns {{processed: number, pruned: number, charsRemoved: number, maxSeen: number}}
+   */
+  incrementalSlim(session, fromSeq = -1, onRow) {
+    const meter = this.ctx?.tokenMeter
+    let processed = 0
+    let handled = 0
+    let charsRemoved = 0
+    let maxSeen = -1
+    for (const seq of Array.from(session.surface.nodes)) { // 快照遍历：append replace 不干扰本轮
+      if (seq <= fromSeq) continue
+      if (seq > maxSeen) maxSeen = seq
+      const event = session.eventAt(seq)
+      if (!event || event.type !== 'tool/result') continue
+      processed += 1
+      const result = event.data?.message?.content?.[0]
+      if (!result) continue
+      let content = null
+      try {
+        content = this.pruneContent(result.content)
+      } catch (err) {
+        this.ctx?.logger?.warn?.('[context-maid] incrementalSlim pruneContent failed: '
+          + (err instanceof Error ? err.message : String(err)))
+        continue
+      }
+      if (content === null) continue
+      const charsBefore = this.measureContent(result.content)
+      const charsAfter = this.measureContent(content)
+      const message = freezeMessage({
+        ...event.data.message,
+        content: [{
+          ...result,
+          content,
+        }],
+      })
+      session.append('compaction/prune', {
+        shadowedRange: { start: seq, end: seq },
+        shadowedSeqs: [seq],
+        shadowedTokenCount: typeof meter?.estimateMessage === 'function'
+          ? meter.estimateMessage(event.data.message)
+          : 0,
+      })
+      const replacement = session.append('tool/result', {
+        ...event.data,
+        message,
+      }, {
+        surfaceOp: { op: 'replace', start: seq, end: seq },
+        sourceEventSeqs: [seq],
+      })
+      if (replacement?.seq > maxSeen) maxSeen = replacement.seq
+      handled += 1
+      charsRemoved += charsBefore - charsAfter
+      onRow?.({
+        op: 'slim',
+        range: seq + ':' + seq,
+        tokensBefore: charsBefore,
+        tokensAfter: charsAfter,
+        summary: 'eventSlim：' + charsBefore + '→' + charsAfter + ' chars（seq ' + seq + '→' + replacement.seq + '）',
+        detail: JSON.stringify({ kind: 'event-slim', originalSeq: seq, replacementSeq: replacement.seq, charsBefore, charsAfter }),
+      })
+    }
+    return { processed, pruned: handled, charsRemoved, maxSeen }
   }
 
   /**

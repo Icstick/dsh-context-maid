@@ -26,8 +26,8 @@ export const Config = z.object({
   'trigger.userRatio': z.number().step(0.01).min(0.05).max(0.95).default(0.4),
   // 未接线（2026-09-07 审计 P0-2）：minTokens 无消费方（官方阈值基于窗口比例）
   'trigger.minTokens': z.number().step(1).min(0).default(30000), // 保留（设计意图）
-  // 未接线（2026-09-07 审计 P0-2）：eventSlim 无消费方（无 tool/result 落地监听，SLIM 仅随官方折叠压力路径触发）
-  'trigger.eventSlim': z.boolean().default(false), // 保留（设计意图）
+  // M5（0.3.0）：eventSlim = 落地即瘦身——step 边界对新增超预算 tool/result 增量瘦身（默认开；阈值见 slim.*）
+  'trigger.eventSlim': z.boolean().default(true),
   // —— 瘦身（M2）——
   'slim.thresholdChars': z.number().step(1).min(100).default(4000),
   'slim.tailChars': z.number().step(1).min(0).default(800),
@@ -90,6 +90,7 @@ export function apply(ctx, config = {}) {
   // 审计库 + 命令
   const auditDir = config.auditDir || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'context-maid')
   const audit = openMaidAudit(auditDir)
+  if (engine) engine.maidAudit = audit // M5：engine 前置清理（eventSlim/sweep）审计通道（engine 构造早于 audit，运行时挂接）
 
   // M3：归档——消费 compaction/summary → ACP ledger（摘要即证据；ACP 可选，离线跳过）
   registerArchiver(ctx, { enabled: config['archive.enabled'] !== false, audit })
@@ -102,7 +103,8 @@ export function apply(ctx, config = {}) {
 
   ctx.logger?.info?.('[context-maid] loaded; userRatio=' + config['trigger.userRatio']
     + ' enabled=' + (config.enabled !== false)
-    + ' engine=' + (engine ? 'maid' : '旁路') + ' slimmer=' + (slimmer ? 'maid' : '官方/无'))
+    + ' engine=' + (engine ? 'maid' : '旁路') + ' slimmer=' + (slimmer ? 'maid' : '官方/无')
+    + ' eventSlim=' + (config['trigger.eventSlim'] !== false))
 
   ctx.effect(() => () => {
     try { audit.close() } catch {}
