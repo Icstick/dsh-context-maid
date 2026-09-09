@@ -309,6 +309,15 @@ status 增加 cleanupTicks / pruner / eventSlim / sweep 诊断行。
 **实测前修复**：superseded-read 收紧为仅路径键指纹触发（fp 含 '|'）——name-only 工具
 （run_code 等）同工具多次成功内容不同，误清前序会丢信息（+1 测试，53 全绿）。
 
+**2026-09-09 阈值修正（slim.thresholdChars 4000→30000，profile patch 层）**：
+用户信息摄取工作流发现 eventSlim 默认 4000（≈1k tokens）过低——>4k 字符的工具输出
+在下一步模型请求前被常态压缩（头尾 800/骨架），模型从未见过中部全文（9-09 实测 28 次处置
+49944→1639 等）。ACP 账本无损（session/event 实时摄入 append 原文 + isCompactionCheckpoint
+跳过 replace 副本），损失面在模型会话内消费。修正：profile patch 阈值调至 30000
+（≈7.5k tokens，覆盖单页网页/单文件；巨型输出仍压缩）。仓库默认值暂未动（4000，
+新 profile 按需配置）。教训：eventSlim 的"常态前置压缩"语义下，阈值应瞄准
+「巨型噪音」而非「中等输出」——信息摄取型工具输出不应被默认压。
+
 **0.3.0 live 验证总结**：FOLD（status 确认）/ eventSlim（21 pruned，-134712 chars）/
 sweep（自动 + 手动均处置）/ 审计闭环全部工作；集成问题 ×3 修复见上；运维口
 /context-maid slim-now + status 诊断行。
