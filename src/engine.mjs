@@ -13,6 +13,7 @@ import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 import { scanSweepCandidates } from './sweeper.mjs'
 import { stubToolResultNode, getTokenMeter } from './slimmer.mjs'
+import { pinAnchorReport } from './anchor.mjs'
 
 /**
  * 把 maid Config 映射为官方 BasicCompactionConfig 子集。
@@ -87,6 +88,8 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
             if (Array.isArray(out?.pruned) && out.pruned.length > 0) {
               this._auditRow({
                 op: 'slim',
+                unit: 'chars',
+                producer: 'dsh-context-maid',
                 summary: 'eventSlim（官方 pruner 全量退化）：' + out.pruned.length + ' 节点瘦身',
                 detail: JSON.stringify({ kind: 'event-slim-fallback', pruned: out.pruned.length }),
               }, session)
@@ -174,6 +177,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     const maid = this.maidConfig ?? {}
     // PIN 事实收集（两种路径共用）
     let pinMessage = null
+    let pinFacts = []
     try {
       if (maid['pin.enabled'] !== false) {
         const { collectPinnedFacts, buildPinInstruction } = await import('./pinner.mjs')
@@ -183,6 +187,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           cwd,
           extra: Array.isArray(maid['pin.extra']) ? maid['pin.extra'] : [],
         })
+        pinFacts = Array.isArray(facts) ? facts : []
         const pinBlock = buildPinInstruction(facts)
         if (pinBlock) {
           pinMessage = {
@@ -208,6 +213,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
         try {
           this.ctx.logger?.info?.('[context-maid] summarize routed to ' + resolved.provider + '/' + resolved.model)
         } catch { /* ignore */ }
+        this._verifyPinAnchors(pinFacts, result, agent)
         return result
       }
     } catch (err) {
@@ -215,7 +221,45 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
         + (err instanceof Error ? err.message : String(err)))
     }
     // 回落：官方路径（maid 显式配置经 toOfficialConfig 已映射 summarizationProvider/Model）
-    return super.summarize({ ...input, messages }, agent, signal)
+    const fallbackResult = await super.summarize({ ...input, messages }, agent, signal)
+    this._verifyPinAnchors(pinFacts, fallbackResult, agent)
+    return fallbackResult
+  }
+
+  /**
+   * C6 第一版（2026-09-09）：压缩后确定性锚点校验——PIN 事实有没有真的进摘要。
+   *
+   * 此前 PIN 只有「事前注入」这一半：摘要写完没有任何校验，丢没丢全靠猜。
+   * 这里用零 LLM、零新存储的字面锚点比对补上后半（借鉴 dsh-premise-guard），
+   * 结果落 audit op=pin，由 /context-maid status 展示。
+   * 纪律：fail-open——任何异常只 warn，绝不阻断压缩。
+   * @param {string[]} facts - 收集到的 PIN 事实（原始文本，非渲染块）
+   * @param {{summary?: Array<{type: string, text?: string}>}} result - summarize 返回
+   * @param {object} agent
+   */
+  _verifyPinAnchors(facts, result, agent) {
+    try {
+      const list = Array.isArray(facts) ? facts : []
+      if (list.length === 0) return
+      const blocks = Array.isArray(result?.summary) ? result.summary : []
+      const summaryText = blocks.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n')
+      if (!summaryText.trim()) return
+      const rep = pinAnchorReport(list, summaryText)
+      const hitText = rep.total > 0
+        ? rep.hits.length + '/' + rep.total + ' 命中' + (rep.ratio === null ? '' : '（' + Math.round(rep.ratio * 100) + '%）')
+        : '无可校验锚点'
+      this._auditRow({
+        op: 'pin',
+        producer: 'dsh-context-maid',
+        unit: 'chars',
+        summary: 'PIN 锚点校验：' + hitText
+          + (rep.unverifiableFacts > 0 ? '；' + rep.unverifiableFacts + ' 条事实无字面锚点（不可校验）' : ''),
+        detail: JSON.stringify({ anchors: rep.anchors, missed: rep.missed, ratio: rep.ratio }),
+      }, agent?.session)
+    } catch (err) {
+      this.ctx.logger?.warn?.('[context-maid] pin anchor verify failed: '
+        + (err instanceof Error ? err.message : String(err)))
+    }
   }
 
   /**

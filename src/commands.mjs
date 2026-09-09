@@ -131,6 +131,14 @@ function renderStatus(ctx, config, audit, getCompaction) {
   } else {
     lines.push('近 7 天策展: （无记录）')
   }
+  // C6（2026-09-09）：PIN 锚点校验最近一次结果——把"软保护有没有生效"变成可看的数字
+  try {
+    const all = typeof audit?.recent === 'function' ? audit.recent(30) : []
+    const pinRow = all.find((r) => r.op === 'pin')
+    if (pinRow) {
+      lines.push('PIN 锚点校验（最近）: ' + String(pinRow.summary ?? '').replace(/^PIN 锚点校验：/, ''))
+    }
+  } catch { /* 诊断失败不阻断 */ }
   let recent = []
   try { recent = typeof audit?.recent === 'function' ? audit.recent(5) : [] } catch {}
   for (const r of recent) {

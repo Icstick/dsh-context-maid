@@ -20,7 +20,7 @@
 | MAID-B2 | P1-4 交叉 | 折叠归档（agent_authored/single_observation/experience）无 kind=maid-checkpoint 标记——T2 权威闸门当前挡下回流注入（豁免已记录于 ACP-B7）；若 ACP 放宽 observationAuthorities 白名单即复活 | ACP 放宽白名单前：appendArchive（archiver.mjs:84-92）加 metadata kind='maid-checkpoint' + ACP composer 排除/降权 | 条件触发（ACP-B7 联动） |
 | MAID-B3 | P3 | commands.mjs:4 误导注释："run/slim-now 等执行命令随对应里程碑（M2 sweeper/slimmer）加入"——M2 早已收口且 sweep 执行器未接线（README 已诚实化），注释与现实脱节 | 删除该注释或改为"执行命令暂不提供（sweep 未接线，见 README）" | open |
 | MAID-B4 | P3 | lint warnings 8 个（0 error）：slimmer.mjs:13 死 import codePointLength、archiver.mjs:64 无必要转义、test 6 个未用参数 | 一次 lint-clean 提交（`pnpm lint` 归零） | open |
-| MAID-B6 | 计划 | C6 压缩质量抽检：从 session 事件取 shadowed 原文 → 无损启发式抽检（或低频 LLM judge）→ 结果落审计 → status 展示。前置：slim/sweep/pin 审计写入补全（audit.mjs op 枚举已预留 slim/sweep/pin，当前仅 fold 有写入方） | archiver.mjs registerArchiver（:150-194）为公共观察点（旁路模式同样生效）；audit.mjs 扩列或 detail 复用；golden 集挂 fixture | planned |
+| MAID-B6 | 计划 | C6 压缩质量抽检：从 session 事件取 shadowed 原文 → 无损启发式抽检（或低频 LLM judge）→ 结果落审计 → status 展示。前置：slim/sweep/pin 审计写入补全（audit.mjs op 枚举已预留 slim/sweep/pin，当前仅 fold 有写入方） | **C6 v1 已落地（2026-09-09）**：`src/anchor.mjs` 确定性锚点校验（零 LLM、零新存储，借鉴 dsh-premise-guard）——PIN 事实抽字面锚点（路径/引号/key=value/常量）与摘要正文做归一化包含比对，结果落 `audit op=pin`（含命中率、missed、不可校验事实数），`/context-maid status` 展示。审计同时补 `unit`/`producer` 列（记账货币口径显式化：slim/sweep=chars，fold=estTokens）。剩余：shadowed 原文侧抽检、golden fixture 挂载 | **v1 完成**（原文侧抽检待做） |
 | MAID-B11 | 记录 | 已知限制：官方压缩从头压连续段，中段 PIN 无法硬排除（pinner.mjs 头注）——硬保护（压缩范围排除 PIN 段）留作未来工作 | 不排期；若压缩引擎 seam 支持 range 排除再评估 | 保留 |
 
 ## 0.3.0 设计拍板（2026-09-08，详见 docs/design-0.3.0.md §10）

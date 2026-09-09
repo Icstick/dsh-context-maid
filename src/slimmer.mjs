@@ -146,6 +146,10 @@ export class MaidSlimmer extends ToolResultPruner {
       onRow?.({
         op: 'slim',
         range: seq + ':' + seq,
+        // P0-2 记账货币纪律（2026-09-09）：列名是 tokens_*，值却是字符——显式声明口径，
+        // 绝不与宿主 token-meter 混算，也不写回宿主账本。
+        unit: 'chars',
+        producer: 'dsh-context-maid',
         tokensBefore: charsBefore,
         tokensAfter: charsAfter,
         summary: 'eventSlim：' + charsBefore + '→' + charsAfter + ' chars（seq ' + seq + '→' + replacement.seq + '）',
@@ -336,6 +340,8 @@ export function stubToolResultNode(session, seq, kind, reason, opts = {}) {
   opts?.onRow?.({
     op: 'sweep',
     range: seq + ':' + seq,
+    unit: 'chars',
+    producer: 'dsh-context-maid',
     tokensBefore: charsBefore,
     tokensAfter: marker.length,
     summary: 'sweep ' + kind + '：seq ' + seq + '→' + replacement.seq,

@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS maid_audit (
   tokens_after INTEGER,
   archive_ids TEXT NOT NULL DEFAULT '[]', -- 归档到 ACP 的条目 id
   summary TEXT NOT NULL DEFAULT '',       -- 摘要/说明（截断 500）
-  detail TEXT NOT NULL DEFAULT ''
+  detail TEXT NOT NULL DEFAULT '',
+  -- 2026-09-09（P0-2 记账货币纪律）：本表数值的口径必须显式声明，绝不与宿主 token-meter 混算。
+  unit TEXT NOT NULL DEFAULT '',          -- chars | estTokens（空 = 未声明）
+  producer TEXT NOT NULL DEFAULT ''       -- 事件生产者（plugin id / 模块名）
 );
 CREATE INDEX IF NOT EXISTS idx_maid_audit_ts ON maid_audit (ts);
 `
@@ -26,11 +29,14 @@ export function openMaidAudit(dir) {
   const db = new DatabaseSync(path.join(dir, 'maid.db'))
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;')
   db.exec(SCHEMA)
+  // v0.3.1 迁移：unit / producer（列已存在时 ALTER 抛错，忽略即可）
+  try { db.exec("ALTER TABLE maid_audit ADD COLUMN unit TEXT NOT NULL DEFAULT ''") } catch { /* 已迁移 */ }
+  try { db.exec("ALTER TABLE maid_audit ADD COLUMN producer TEXT NOT NULL DEFAULT ''") } catch { /* 已迁移 */ }
 
   function append(row = {}) {
     try {
-      db.prepare(`INSERT INTO maid_audit (ts, op, session_id, range, tokens_before, tokens_after, archive_ids, summary, detail)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      db.prepare(`INSERT INTO maid_audit (ts, op, session_id, range, tokens_before, tokens_after, archive_ids, summary, detail, unit, producer)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         Date.now(),
         String(row.op ?? ''),
         String(row.sessionId ?? ''),
@@ -40,6 +46,8 @@ export function openMaidAudit(dir) {
         JSON.stringify(row.archiveIds ?? []),
         String(row.summary ?? '').slice(0, 500),
         String(row.detail ?? '').slice(0, 500),
+        String(row.unit ?? ''),
+        String(row.producer ?? ''),
       )
     } catch { /* 审计失败不阻断策展 */ }
   }

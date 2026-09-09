@@ -180,6 +180,9 @@ export function registerArchiver(ctx, opts = {}) {
           op: 'fold',
           sessionId: session?.id ?? '',
           range: data.shadowedRange ? data.shadowedRange.start + ':' + data.shadowedRange.end : '',
+          // 口径 = 宿主 token-meter 的固定启发价（estTokens）；不得与 chars 口径混算。
+          unit: 'estTokens',
+          producer: 'dsh-context-maid',
           tokensBefore: data.shadowedTokenCount,
           archiveIds,
           summary: 'compaction/summary → ' + (archiveIds.length > 0 ? 'ACP ' + archiveIds[0] : note),
