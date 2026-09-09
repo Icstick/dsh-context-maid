@@ -32,7 +32,7 @@ function mockCtx() {
 
 test('MaidSlimmer：超阈值 JSON tool 输出被骨架化', async () => {
   const { MaidSlimmer } = await import('../src/slimmer.mjs')
-  const slimmer = new MaidSlimmer(mockCtx(), {})
+  const slimmer = new MaidSlimmer(mockCtx(), { 'slim.thresholdChars': 1000 })
   const big = JSON.stringify({ data: Array.from({ length: 200 }, (_, i) => ({ i, v: 'value-' + i })) })
   const blocks = [{ type: 'text', text: big }]
   const pruned = slimmer.pruneContent(blocks)
@@ -44,14 +44,14 @@ test('MaidSlimmer：超阈值 JSON tool 输出被骨架化', async () => {
 
 test('MaidSlimmer：未超阈值返回 null（不动）', async () => {
   const { MaidSlimmer } = await import('../src/slimmer.mjs')
-  const slimmer = new MaidSlimmer(mockCtx(), {})
+  const slimmer = new MaidSlimmer(mockCtx(), { 'slim.thresholdChars': 1000 })
   const small = 'x'.repeat(500)
   assert.equal(slimmer.pruneContent([{ type: 'text', text: small }]), null)
 })
 
 test('MaidSlimmer：错误类输出保留尾部（诊断信息）', async () => {
   const { MaidSlimmer } = await import('../src/slimmer.mjs')
-  const slimmer = new MaidSlimmer(mockCtx(), { 'slim.headChars': 200, 'slim.tailChars': 200 })
+  const slimmer = new MaidSlimmer(mockCtx(), { 'slim.thresholdChars': 1000, 'slim.headChars': 200, 'slim.tailChars': 200 })
   const body = 'Error: build failed\n' + 'x'.repeat(8000) + '\n  at final: the actual error detail is here'
   const pruned = slimmer.pruneContent([{ type: 'text', text: body }])
   assert.ok(pruned !== null)
