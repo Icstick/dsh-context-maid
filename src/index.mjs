@@ -27,7 +27,7 @@ export const Config = z.object({
   // M5（0.3.0）：eventSlim = 落地即瘦身——step 边界对新增超预算 tool/result 增量瘦身（默认开；阈值见 slim.*）
   'trigger.eventSlim': z.boolean().default(true),
   // —— 瘦身（M2）——
-  'slim.thresholdChars': z.number().step(1).min(100).default(4000),
+  'slim.thresholdChars': z.number().step(1).min(100).default(30000), // 2026-09-09 调高：4000(≈1k tokens) 对信息摄取工作流过低（模型不见 >4k 输出中部全文）；30k≈7.5k tokens 覆盖单页网页/单文件
   'slim.tailChars': z.number().step(1).min(0).default(800),
   'slim.headChars': z.number().step(1).min(0).default(800),
   // —— 清理（M2）——

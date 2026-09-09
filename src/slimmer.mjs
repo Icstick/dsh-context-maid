@@ -73,7 +73,7 @@ export class MaidSlimmer extends ToolResultPruner {
    */
   constructor(ctx, maidConfig = {}) {
     super(ctx, {
-      thresholdChars: Number(maidConfig['slim.thresholdChars']) || 4000,
+      thresholdChars: Number(maidConfig['slim.thresholdChars']) || 30000,
       headChars: Number(maidConfig['slim.headChars']) || 800,
       tailChars: Number(maidConfig['slim.tailChars']) || 800,
     })
