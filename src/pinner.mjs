@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 // src/pinner.mjs — 钉扎段：收集「必须保留」事实，注入摘要指令（软保护，M3）。
 //
@@ -95,4 +95,19 @@ export function buildPinInstruction(facts, budget = PIN_BUDGET_CHARS) {
     + list.join('\n')
 }
 
-export default { collectPinnedFacts, buildPinInstruction }
+/** 构造 PIN 注入消息（summarize 前插进被压区域重放）。
+ *
+ *  2026-09-10：source 不再声明自造值 form:'pin'——form 是官方语义闭集词表
+ *  （instructions/catalog/snapshot/notice/relay/recall），表外的值会让
+ *  session-format 的 v2→v3 迁移拒收**整条会话**（本机 25 条历史会话因此打不开）。
+ *  不声明 form 是官方默认（opaque 上下文行），渲染与未知 form 完全一致。 */
+export function pinPluginMessage(text) {
+  return {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text }],
+    source: { kind: 'plugin', plugin: 'dsh-context-maid' },
+  }
+}
+
+export default { collectPinnedFacts, buildPinInstruction, pinPluginMessage }

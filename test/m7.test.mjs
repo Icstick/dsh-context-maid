@@ -1,7 +1,7 @@
 // test/m7.test.mjs — M7：收口（B9 死键删除 + B10 PIN 预算 + 版本）
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildPinInstruction, collectPinnedFacts, PIN_BUDGET_CHARS } from '../src/pinner.mjs'
+import { buildPinInstruction, collectPinnedFacts, pinPluginMessage, PIN_BUDGET_CHARS } from '../src/pinner.mjs'
 
 // —— B10：PIN 预算 ——
 test('buildPinInstruction：预算内原样；超预算整条截断 + 计数标注', () => {
@@ -39,6 +39,17 @@ test('预算截断保 authority 优先级（收集顺序即优先级：user_expl
   assert.ok(out.includes('[ACP user_explicit] u2'), '高优先级保留')
   assert.ok(!out.includes('[ACP system_policy]'), '最低优先级被预算截断')
   assert.ok(out.includes('+1 more facts omitted'), '截断计数')
+})
+
+// —— form 词表纪律（2026-09-10 事故）：source 只声明官方语义闭集值 ——
+test('pin 注入消息：source 不自造 form（表外值会让会话迁移拒收整条会话）', () => {
+  const msg = pinPluginMessage('pin block text')
+  assert.equal(msg.role, 'user')
+  assert.equal(msg.content[0].text, 'pin block text')
+  assert.equal(msg.source.kind, 'plugin')
+  assert.equal(msg.source.plugin, 'dsh-context-maid')
+  assert.equal(msg.source.form, undefined, 'form 是官方词表，自造值禁止')
+  assert.ok(typeof msg.id === 'string' && msg.id.length > 0, '消息带 id')
 })
 
 // —— B9：死键已从 Config 删除 ——

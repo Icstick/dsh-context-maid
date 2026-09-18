@@ -8,7 +8,6 @@
 //  - summarize() 官方唯一子类钩子：M4 知识感知摘要在此覆写
 //  - 钉扎（M3 spike）：范围排除需在覆写点做，见设计 §5.2
 
-import { randomUUID } from 'node:crypto'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 import { scanSweepCandidates } from './sweeper.mjs'
@@ -180,7 +179,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     let pinFacts = []
     try {
       if (maid['pin.enabled'] !== false) {
-        const { collectPinnedFacts, buildPinInstruction } = await import('./pinner.mjs')
+        const { collectPinnedFacts, buildPinInstruction, pinPluginMessage } = await import('./pinner.mjs')
         const cwd = agent?.session?.cwd ?? ''
         const facts = await collectPinnedFacts(this.ctx, {
           scopeId: 'user-global',
@@ -190,12 +189,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
         pinFacts = Array.isArray(facts) ? facts : []
         const pinBlock = buildPinInstruction(facts)
         if (pinBlock) {
-          pinMessage = {
-            id: randomUUID(),
-            role: 'user',
-            content: [{ type: 'text', text: pinBlock }],
-            source: { kind: 'plugin', plugin: 'dsh-context-maid', form: 'pin' },
-          }
+          pinMessage = pinPluginMessage(pinBlock)
         }
       }
     } catch (err) {
