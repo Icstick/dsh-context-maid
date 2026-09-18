@@ -13,6 +13,8 @@ import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 import { scanSweepCandidates } from './sweeper.mjs'
 import { stubToolResultNode, getTokenMeter } from './slimmer.mjs'
 import { pinAnchorReport } from './anchor.mjs'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
 
 /**
  * 把 maid Config 映射为官方 BasicCompactionConfig 子集。
@@ -160,6 +162,37 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     } catch { /* 审计失败不阻断策展 */ }
   }
 
+  /** 诊断落盘（仅 debug=true）：<auditDir>/maid-trace.log。任何失败都不阻断。 */
+  _trace(line) {
+    if (this.maidConfig?.debug !== true) return
+    try {
+      const dir = this.maidAuditDir
+      if (!dir) return
+      mkdirSync(dir, { recursive: true })
+      appendFileSync(path.join(dir, 'maid-trace.log'), new Date().toISOString() + ' ' + line + '\n')
+    } catch { /* 诊断失败不阻断 */ }
+  }
+
+  /** 压力路径探针（仅 debug=true，节流 60s）：单独验证注入绑定与计量值。 */
+  _probePressure(agent, trigger) {
+    if (this.maidConfig?.debug !== true || trigger !== 'pressure') return
+    const now = Date.now()
+    if (this._probeLastAt !== undefined && now - this._probeLastAt < 60000) return
+    this._probeLastAt = now
+    try {
+      const meter = this.ctx.tokenMeter // 属性访问 = 注入代理是否绑定
+      const m = meter.measure(agent.session)
+      this._trace('probe: tokenMeter=ok totalTokens=' + m.totalTokens + ' session=' + (agent?.session?.id ?? ''))
+    } catch (err) {
+      this._trace('probe: tokenMeter THREW: ' + (err?.message ?? err))
+    }
+    try {
+      this._trace('probe: llm=' + (this.ctx.llm ? 'ok' : 'missing'))
+    } catch (err) {
+      this._trace('probe: llm THREW: ' + (err?.message ?? err))
+    }
+  }
+
   /**
    * M3+M4：覆写官方唯一子类钩子——PIN 注入 + 智能路由摘要。
    * 目标解析链：
@@ -271,7 +304,18 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
       this.ctx?.logger?.warn?.('[context-maid] runPreCleanup failed: '
         + (err instanceof Error ? err.message : String(err)))
     }
-    return super.compactIfNeeded(agent, trigger, signal)
+    // 诊断（2026-09-18）：官方路径抛错时，pre-step 处理器只 warn 到宿主日志——外部看不见。
+    // debug=true 时把「注入是否可用 / 测得多大 / 抛了什么」写进 <auditDir>/maid-trace.log。
+    this._probePressure(agent, trigger)
+    try {
+      const res = await super.compactIfNeeded(agent, trigger, signal)
+      this._trace('compactIfNeeded(' + trigger + ') → '
+        + (res ? 'compacted ' + JSON.stringify(res.shadowedRange ?? null) : 'null（未达阈值或无范围）'))
+      return res
+    } catch (err) {
+      this._trace('compactIfNeeded(' + trigger + ') THREW: ' + (err?.stack ?? err))
+      throw err
+    }
   }
 
   /** 智能路由解析器注册表（外部插件接入点）——见 constructor _resolvers */

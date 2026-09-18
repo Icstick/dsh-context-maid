@@ -18,13 +18,12 @@ import { MaidSlimmer } from './slimmer.mjs'
 import { registerArchiver } from './archiver.mjs'
 
 export const name = 'context-maid'
-// 注入声明（2026-09-18 修）：MaidCompactionEngine 继承的官方 compactIfNeeded 内部用
-// `this.ctx.tokenMeter` / `this.ctx.llm` 属性访问；cordis 对"手动 new 出来的 Service"
-// 不绑注入代理，属性访问会抛 "cannot get property ... without inject" —— 表现为
-// runPreCleanup 照跑、但官方路径（压力/溢出压缩）在第一步就抛错，永不压缩。
-// 声明这两个注入后 plugin fiber 才有绑定。slimmer 里的 ctx.get('tokenMeter') 是同一
-// 问题的另一处规避，保留不动。
-export const inject = ['llm', 'tokenMeter']
+// 注入声明（2026-09-18 定论·更正）：对「loader 装载的行」，模块级 export 的 inject
+// **不生效** —— loader 建 fiber 注入表用的是 entry.options.inject
+// （cordis-plugin-loader/lib/index.js:548）。真正生效的声明在 cordis.patch.yml 的行上：
+//     inject: [llm, tokenMeter, sessions]
+// 下面这行只是给 ctx.plugin(mod) 这类程序化装载留的声明，保留但不承担 loader 行。
+export const inject = ['llm', 'tokenMeter', 'sessions']
 
 export const Config = z.object({
   enabled: z.boolean().default(true),
@@ -91,7 +90,10 @@ export function apply(ctx, config = {}) {
   // 审计库 + 命令
   const auditDir = config.auditDir || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'context-maid')
   const audit = openMaidAudit(auditDir)
-  if (engine) engine.maidAudit = audit // M5：engine 前置清理（eventSlim/sweep）审计通道（engine 构造早于 audit，运行时挂接）
+  if (engine) {
+    engine.maidAudit = audit // M5：engine 前置清理（eventSlim/sweep）审计通道（engine 构造早于 audit，运行时挂接）
+    engine.maidAuditDir = auditDir // 诊断日志（debug=true）与审计同目录
+  }
 
   // M3：归档——消费 compaction/summary → ACP ledger（摘要即证据；ACP 可选，离线跳过）
   registerArchiver(ctx, { enabled: config['archive.enabled'] !== false, audit })
