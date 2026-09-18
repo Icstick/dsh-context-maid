@@ -2,3 +2,12 @@
 - insert:
     - id: context-maid
       name: dsh-context-maid
+      # 注入必须写在「行」上（2026-09-18 定位）：cordis loader 建 fiber 注入表用的是
+      # entry.options.inject —— cordis-plugin-loader/lib/index.js:548
+      #   Inject.resolve(fiber.entry.options.inject, fiber.inject)
+      # 模块里的 `export const inject` 对 loader 装载的行不生效。缺这两个绑定，
+      # MaidCompactionEngine 继承的官方 compactIfNeeded 第一步 this.ctx.tokenMeter 就抛
+      # "cannot get property ... without inject"，表现为 runPreCleanup 照跑、
+      # 压力/溢出压缩永不发生（maid-trace.log 里有原始 stack）。
+      # 三个都要：官方 compactIfNeeded 用到 tokenMeter(885/959/982)、llm(903)、sessions.flush(966)。
+      inject: [llm, tokenMeter, sessions]
