@@ -24,9 +24,9 @@ function fakeSession(events = []) {
       appended.push(ev)
       const op = opts?.surfaceOp
       if (op && op.op === 'replace') {
-        // 位置语义：把 surface 上 [start..end]（按 seq 定位的位置段）替换为新节点
-        const i0 = surface.nodes.indexOf(op.start)
-        const i1 = surface.nodes.indexOf(op.end)
+        // 位置语义：把 surface 上 [startSeq..endSeq]（按 seq 定位的位置段）替换为新节点
+        const i0 = surface.nodes.indexOf(op.startSeq)
+        const i1 = surface.nodes.indexOf(op.endSeq)
         if (i0 >= 0 && i1 >= i0) surface.nodes = [...surface.nodes.slice(0, i0), ev.seq, ...surface.nodes.slice(i1 + 1)]
       } else {
         surface.nodes = [...surface.nodes, ev.seq]
@@ -83,7 +83,7 @@ test('stubToolResultNode：整节点 stub + shadow-price 协议（marker 无原�
   assert.equal(calls[0].type, 'compaction/prune')
   assert.deepEqual(calls[0].data.shadowedSeqs, [2])
   assert.equal(calls[1].type, 'tool/result')
-  assert.deepEqual(calls[1].surfaceOp, { op: 'replace', start: 2, end: 2 })
+  assert.deepEqual(calls[1].surfaceOp, { op: 'replace', startSeq: 2, endSeq: 2 })
   assert.deepEqual(calls[1].sourceEventSeqs, [2])
   const text = calls[1].data.message.content[0].content[0].text
   assert.ok(text.startsWith('[maid sweep: superseded-read'), 'stub 标记')

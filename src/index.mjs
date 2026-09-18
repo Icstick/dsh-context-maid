@@ -18,7 +18,13 @@ import { MaidSlimmer } from './slimmer.mjs'
 import { registerArchiver } from './archiver.mjs'
 
 export const name = 'context-maid'
-export const inject = []
+// 注入声明（2026-09-18 修）：MaidCompactionEngine 继承的官方 compactIfNeeded 内部用
+// `this.ctx.tokenMeter` / `this.ctx.llm` 属性访问；cordis 对"手动 new 出来的 Service"
+// 不绑注入代理，属性访问会抛 "cannot get property ... without inject" —— 表现为
+// runPreCleanup 照跑、但官方路径（压力/溢出压缩）在第一步就抛错，永不压缩。
+// 声明这两个注入后 plugin fiber 才有绑定。slimmer 里的 ctx.get('tokenMeter') 是同一
+// 问题的另一处规避，保留不动。
+export const inject = ['llm', 'tokenMeter']
 
 export const Config = z.object({
   enabled: z.boolean().default(true),

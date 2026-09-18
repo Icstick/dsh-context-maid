@@ -8,6 +8,10 @@
 //  - 错误/stderr：头部摘要行 + 尾部错误段（诊断价值在尾部）
 //  - 长文本/日志：官方 head/tail（头部上下文 + 尾部结论）
 //  - 其它：回退官方策略
+//
+// 会话层契约（2026-09-18 修）：surface replace 只接受 { op:'replace', startSeq, endSeq }
+// （core/session README.zh.md + tests/canonical-envelopes.spec.ts）。旧键名 start/end 会被
+// 整条拒绝 → 追加抛错 → fail-open 吞成 warn → 日志里只剩孤儿 compaction/prune，瘦身永不落地。
 
 import { ToolResultPruner } from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import { freezeMessage } from '@deepseek-ai/dsh-llm'
@@ -137,7 +141,7 @@ export class MaidSlimmer extends ToolResultPruner {
         ...event.data,
         message,
       }, {
-        surfaceOp: { op: 'replace', start: seq, end: seq },
+        surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq },
         sourceEventSeqs: [seq],
       })
       if (replacement?.seq > maxSeen) maxSeen = replacement.seq
@@ -204,7 +208,7 @@ export class MaidSlimmer extends ToolResultPruner {
         ...event.data,
         message,
       }, {
-        surfaceOp: { op: 'replace', start: seq, end: seq },
+        surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq },
         sourceEventSeqs: [seq],
       })
       pruned.push({
@@ -334,7 +338,7 @@ export function stubToolResultNode(session, seq, kind, reason, opts = {}) {
     ...event.data,
     message,
   }, {
-    surfaceOp: { op: 'replace', start: seq, end: seq },
+    surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq },
     sourceEventSeqs: [seq],
   })
   opts?.onRow?.({

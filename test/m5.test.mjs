@@ -89,7 +89,7 @@ test('incrementalSlim：replace 协议正确（prune 定价前置 + surfaceOp + 
   assert.equal(calls[0].type, 'compaction/prune')
   assert.deepEqual(calls[0].data.shadowedSeqs, [10])
   assert.equal(calls[1].type, 'tool/result')
-  assert.deepEqual(calls[1].surfaceOp, { op: 'replace', start: 10, end: 10 })
+  assert.deepEqual(calls[1].surfaceOp, { op: 'replace', startSeq: 10, endSeq: 10 })
   assert.deepEqual(calls[1].sourceEventSeqs, [10])
   const text = calls[1].data.message.content[0].content[0].text
   assert.ok(text.length < 100, '替换文本已瘦身')
