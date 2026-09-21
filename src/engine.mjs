@@ -272,16 +272,45 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
       const summaryText = blocks.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n')
       if (!summaryText.trim()) return
       const rep = pinAnchorReport(list, summaryText)
-      const hitText = rep.total > 0
-        ? rep.hits.length + '/' + rep.total + ' 命中' + (rep.ratio === null ? '' : '（' + Math.round(rep.ratio * 100) + '%）')
+      const hitsN = rep.hits.length
+      const totalN = rep.total
+      const pct = (x) => (x === null || x === undefined ? '—' : Math.round(x * 100) + '%')
+      // MAID-B12（2026-09-21）：可校验率与命中率必须同时出现。
+      // 只报命中率会把「没得验」悄悄算成「验过了没丢」——16 条事实里常常只有 4 条抽得出锚点。
+      const verifyText = '可校验 ' + rep.verifiableFacts + '/' + rep.factsCount + '（' + pct(rep.verifiableRatio) + '）'
+      const hitText = totalN > 0
+        ? '命中 ' + hitsN + '/' + totalN + '（' + pct(rep.ratio) + '）'
         : '无可校验锚点'
+      // 全丢是「这次压缩没把 PIN 带进摘要」的硬信号；warn 不阻断（符合仓库保留 warn 级别的惯例）。
+      if (totalN > 0 && hitsN === 0) {
+        this.ctx.logger?.warn?.('[context-maid] PIN 锚点全丢 ' + hitsN + '/' + totalN
+          + '：' + rep.missed.join(', ') + '（本次摘要未携带任何可校验锚点）')
+      }
+      // audit 把 detail 截到 500 字符，而锚点列表是变长的：
+      // 超限会写出**半截 JSON**，而 /context-maid status 的近 N 次分布正依赖它可解析（B12）。
+      // 故先压长度再落盘；hits/total 是独立字段，裁剪数组不影响计数口径。
+      const pinDetail = {
+        anchors: rep.anchors,
+        missed: rep.missed,
+        hits: hitsN,
+        total: totalN,
+        ratio: rep.ratio,
+        factsCount: rep.factsCount,
+        verifiableFacts: rep.verifiableFacts,
+        verifiableRatio: rep.verifiableRatio,
+      }
+      while (JSON.stringify(pinDetail).length > 480
+        && (pinDetail.anchors.length > 1 || pinDetail.missed.length > 1)) {
+        if (pinDetail.anchors.length >= pinDetail.missed.length) pinDetail.anchors = pinDetail.anchors.slice(0, -1)
+        else pinDetail.missed = pinDetail.missed.slice(0, -1)
+      }
       this._auditRow({
         op: 'pin',
         producer: 'dsh-context-maid',
         unit: 'chars',
-        summary: 'PIN 锚点校验：' + hitText
+        summary: 'PIN 锚点校验：' + verifyText + ' · ' + hitText
           + (rep.unverifiableFacts > 0 ? '；' + rep.unverifiableFacts + ' 条事实无字面锚点（不可校验）' : ''),
-        detail: JSON.stringify({ anchors: rep.anchors, missed: rep.missed, ratio: rep.ratio }),
+        detail: JSON.stringify(pinDetail),
       }, agent?.session)
     } catch (err) {
       this.ctx.logger?.warn?.('[context-maid] pin anchor verify failed: '

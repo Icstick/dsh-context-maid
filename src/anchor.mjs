@@ -70,8 +70,11 @@ export function verifyAnchors(anchors, haystack) {
  * PIN 事实清单 → 摘要文本 的命中报告。
  * @param {string[]} facts - collectPinnedFacts 的原始事实（不是渲染后的指令块）
  * @param {string} summaryText - 摘要正文
+ * 2026-09-21（MAID-B12）：返回值补 `factsCount` / `verifiableFacts` / `verifiableRatio`——
+ * 「16 条事实里只有 4 条抽得出锚点」这件事必须可见，否则命中率分母被悄悄换掉，
+ * 0/4 与 4/4 看起来一样可信。
  * @param {{maxAnchors?: number, minAnchorLength?: number}} [opts]
- * @returns {{anchors: string[], hits: string[], missed: string[], total: number, ratio: number|null, unverifiableFacts: number}}
+ * @returns {{anchors: string[], hits: string[], missed: string[], total: number, ratio: number|null, unverifiableFacts: number, factsCount: number, verifiableFacts: number, verifiableRatio: number|null}}
  */
 export function pinAnchorReport(facts, summaryText, opts = {}) {
   const list = Array.isArray(facts) ? facts : []
@@ -86,7 +89,65 @@ export function pinAnchorReport(facts, summaryText, opts = {}) {
   }
   const anchors = collected.slice(0, max)
   const v = verifyAnchors(anchors, summaryText)
-  return { anchors, hits: v.hits, missed: v.missed, total: v.total, ratio: v.ratio, unverifiableFacts }
+  const factsCount = list.length
+  const verifiableFacts = factsCount - unverifiableFacts
+  return {
+    anchors, hits: v.hits, missed: v.missed, total: v.total, ratio: v.ratio, unverifiableFacts,
+    factsCount,
+    verifiableFacts,
+    verifiableRatio: factsCount > 0 ? verifiableFacts / factsCount : null,
+  }
 }
 
-export default { extractAnchors, verifyAnchors, pinAnchorReport }
+/**
+ * MAID-B12（2026-09-21）：把「最近一次 PIN 校验」换成**近 N 次分布**。
+ *
+ * 动因是一手事故：调研时只查了最近 12 行（恰好全是 4/4）→ 误判「软保护 100% 有效」，
+ * 而真实分布里 10.5% 是 0/4 全丢。只报最近一次 = 幸存者偏差。
+ *
+ * 兼容性：2026-09-21 之前写的行没有 hits/total，用 anchors/missed 反推（hits = anchors - missed）；
+ * 这一步不能只看 missed.length——那会把「锚点本来就少」误算成「全丢掉」。
+ * @param {Array<{op?: string, detail?: string}>} rows - audit.recent() 的结果（含非 pin 行，内部过滤）
+ * @param {{maxRuns?: number}} [opts]
+ * @returns {{runs: number, buckets: Array<{key: string, hits: number, total: number, n: number}>, zeroRuns: number, noAnchorRuns: number, facts: number, verifiableFacts: number, verifiableRatio: number|null}}
+ */
+export function summarizePinHistory(rows, opts = {}) {
+  const maxRuns = Number.isInteger(opts.maxRuns) ? opts.maxRuns : 20
+  const list = (Array.isArray(rows) ? rows : []).filter((r) => r && r.op === 'pin').slice(0, maxRuns)
+  const byKey = new Map()
+  let zeroRuns = 0
+  let noAnchorRuns = 0
+  let facts = 0
+  let verifiableFacts = 0
+  for (const r of list) {
+    let d = null
+    try { d = JSON.parse(String(r.detail ?? '')) } catch { d = null }
+    if (!d || typeof d !== 'object') { noAnchorRuns += 1; continue }
+    const anchors = Array.isArray(d.anchors) ? d.anchors : []
+    const missed = Array.isArray(d.missed) ? d.missed : []
+    const total = Number.isInteger(d.total) ? d.total : anchors.length
+    const hits = Number.isInteger(d.hits) ? d.hits : Math.max(0, anchors.length - missed.length)
+    if (Number.isInteger(d.factsCount) && d.factsCount > 0) {
+      facts += d.factsCount
+      verifiableFacts += Number.isInteger(d.verifiableFacts) ? d.verifiableFacts : total
+    }
+    if (total <= 0) { noAnchorRuns += 1; continue }
+    if (hits <= 0) zeroRuns += 1
+    const key = hits + '/' + total
+    const cur = byKey.get(key) ?? { key, hits, total, n: 0 }
+    cur.n += 1
+    byKey.set(key, cur)
+  }
+  const buckets = [...byKey.values()].sort((a, b) => (b.hits / b.total - a.hits / a.total) || (b.total - a.total) || a.key.localeCompare(b.key))
+  return {
+    runs: list.length,
+    buckets,
+    zeroRuns,
+    noAnchorRuns,
+    facts,
+    verifiableFacts,
+    verifiableRatio: facts > 0 ? verifiableFacts / facts : null,
+  }
+}
+
+export default { extractAnchors, verifyAnchors, pinAnchorReport, summarizePinHistory }

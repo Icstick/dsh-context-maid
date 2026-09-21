@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { collectPinnedFacts, buildPinInstruction } from '../src/pinner.mjs'
-import { summaryTextOf, registerArchiver, redactSecrets } from '../src/archiver.mjs'
+import { summaryTextOf, registerArchiver, redactSecrets, nextFoldDepth } from '../src/archiver.mjs'
 
 // —— pinner ——
 test('collectPinnedFacts：ACP 高 authority + work goal + extra 清单', async () => {
@@ -139,4 +139,32 @@ test('registerArchiver：append block（疑似凭据）→ 脱敏重试成功归
   assert.equal(auditRows[0].archiveIds[0], 'ev_maid_redacted')
   assert.match(auditRows[0].summary, /ACP ev_maid_redacted/, 'audit 记成功归档 id')
   assert.match(auditRows[0].detail, /脱敏/, 'detail 记脱敏重试')
+})
+
+// —— MAID-B14（2026-09-21）：FOLD 递归深度记账 ——
+
+test('B14：nextFoldDepth 按 session.ts 递增且互不干扰', () => {
+  const s1 = { id: 'b14-a-' + Date.now() }
+  const s2 = { id: 'b14-b-' + Date.now() }
+  assert.equal(nextFoldDepth(s1, undefined), 1)
+  assert.equal(nextFoldDepth(s1, undefined), 2)
+  assert.equal(nextFoldDepth(s2, undefined), 1, '另一个会话从头数')
+  assert.equal(nextFoldDepth(s1, undefined), 3)
+})
+
+test('B14：进程重启后从审计库播种，不从 1 重来', () => {
+  const sid = 'b14-seed-' + Date.now()
+  const audit = {
+    recent: () => [
+      { op: 'fold', sessionId: sid, detail: JSON.stringify({ note: 'x', foldDepth: 1 }) },
+      { op: 'fold', sessionId: sid, detail: JSON.stringify({ note: 'y', foldDepth: 2 }) },
+      { op: 'fold', sessionId: 'other-' + Date.now(), detail: JSON.stringify({ foldDepth: 9 }) },
+    ],
+  }
+  assert.equal(nextFoldDepth({ id: sid }, audit), 3, '接在已有 2 层之后')
+})
+
+test('B14：无 session.id 时返回 1 且不抛（fail-open）', () => {
+  assert.equal(nextFoldDepth({}, undefined), 1)
+  assert.equal(nextFoldDepth(undefined, undefined), 1)
 })

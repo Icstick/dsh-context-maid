@@ -145,6 +145,47 @@ export function getAcpService(ctx) {
  * @param {object} ctx - cordis Context
  * @param {object} opts - { enabled, audit }
  */
+// MAID-B14（2026-09-21）：FOLD 递归深度记账。
+//
+// 为什么必须记：深度是「这个会话还要不要继续」的唯一判据，而现在只能靠
+// `count(op=fold) group by session_id` 反推（实测有会话折了 17 轮、另一个 6.7 分钟折 8 轮）。
+//
+// 为什么不用 WeakMap 按 session **对象**计数（原设计稿的写法）：对象身份在事件派发之间
+// 没有任何保证——一旦宿主每次派发都换包装对象，WeakMap 会恒返回 0，深度永远写 1 而且
+// **静默无声**。改用 session.id 字符串做键；单机会话数有界，增长可忽略。
+// 进程重启后从审计库播种（表里已有历史 fold 行），不从 1 重来。
+const foldDepthBySession = new Map()
+const foldDepthSeeded = new Set()
+
+/**
+ * 取本会话的下一次折叠深度（1 起）。首次遇到该会话时从审计库播种。
+ * @param {{id?: string}} session
+ * @param {{recent?: (n: number) => Array<object>}} [audit]
+ * @returns {number}
+ */
+export function nextFoldDepth(session, audit) {
+  const id = String(session?.id ?? '')
+  if (!id) return 1
+  if (!foldDepthSeeded.has(id)) {
+    foldDepthSeeded.add(id)
+    let rows = 0
+    let maxDepth = 0
+    try {
+      const recent = typeof audit?.recent === 'function' ? audit.recent(500) : []
+      for (const r of recent) {
+        if (!r || r.op !== 'fold' || String(r.sessionId ?? '') !== id) continue
+        rows += 1
+        const m = /"foldDepth"\s*:\s*(\d+)/.exec(String(r.detail ?? ''))
+        if (m) maxDepth = Math.max(maxDepth, Number(m[1]))
+      }
+    } catch { /* 播种失败就从 1 开始，不阻断 */ }
+    foldDepthBySession.set(id, Math.max(rows, maxDepth))
+  }
+  const next = (foldDepthBySession.get(id) ?? 0) + 1
+  foldDepthBySession.set(id, next)
+  return next
+}
+
 export function registerArchiver(ctx, opts = {}) {
   const enabled = opts.enabled !== false
   ctx.on('session/event', (session, event) => {
@@ -175,6 +216,7 @@ export function registerArchiver(ctx, opts = {}) {
         }
       }
       // audit-first：无条件留痕（审计失败不阻断策展）
+      const foldDepth = nextFoldDepth(session, opts.audit)
       try {
         opts.audit?.append?.({
           op: 'fold',
@@ -185,8 +227,16 @@ export function registerArchiver(ctx, opts = {}) {
           producer: 'dsh-context-maid',
           tokensBefore: data.shadowedTokenCount,
           archiveIds,
-          summary: 'compaction/summary → ' + (archiveIds.length > 0 ? 'ACP ' + archiveIds[0] : note),
-          detail: note,
+          summary: 'compaction/summary → ' + (archiveIds.length > 0 ? 'ACP ' + archiveIds[0] : note)
+            + '（foldDepth ' + foldDepth + '）',
+          // detail 改成 JSON：foldDepth 必须是可读字段，不能只靠 summary 里的一句话。
+          // note 保留在 JSON 内，既有测试（/acp 不可用/、/脱敏/）继续成立。
+          detail: JSON.stringify({
+            note,
+            foldDepth,
+            compactionId: String(data.compactionId ?? ''),
+            shadowedTokens: data.shadowedTokenCount ?? null,
+          }),
         })
       } catch { /* 审计失败不阻断 */ }
     } catch (err) {
