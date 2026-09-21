@@ -2,10 +2,15 @@
 //
 // M1：status（引擎提供者 + 阈值 + 近 7 天策展统计）与 config（当前生效配置）。
 // 执行类命令暂不提供（sweep/slim 随官方折叠压力路径自动执行；0.3.0 M5/M6 落地后按需评估手动触发）。
+//
+// 2026-09-21（MAID-B12/B14）：status 从「最近一次结果」改为**历史分布 + 本会话折叠深度**——
+// 只报最近一次会形成幸存者偏差（实测：只查最近 12 行全是 4/4，误判为「保护 100% 有效」）。
+
+import { summarizePinHistory } from './anchor.mjs'
 
 const USAGE = [
   'Usage: /context-maid <verb>',
-  '  status         查看引擎提供者、阈值映射、近 7 天策展统计与最近记录',
+  '  status         查看引擎提供者、阈值映射、近 7 天策展统计、PIN 校验历史分布、本会话折叠深度与最近记录',
   '  config         查看当前生效配置',
   '  slim-now       手动执行一次前置清理（eventSlim 增量瘦身 + sweep 清扫；0.3.0 验证/诊断口）',
   '  help           本帮助',
@@ -38,7 +43,7 @@ export function registerMaidCommands(ctx, deps) {
         try {
           const raw = String(invocation?.rawInput ?? '').trim()
           const [verb] = raw.split(/\s+/)
-          if (verb === 'status') return { kind: 'success', text: renderStatus(ctx, config, audit, getCompaction) }
+          if (verb === 'status') return { kind: 'success', text: renderStatus(ctx, config, audit, getCompaction, invocation) }
           if (verb === 'config') return { kind: 'success', text: renderConfig(config) }
           if (verb === 'slim-now') return runSlimNow(ctx, invocation, getCompaction)
           return { kind: 'success', text: USAGE }
@@ -84,7 +89,7 @@ function renderConfig(config) {
   return lines.join('\n')
 }
 
-function renderStatus(ctx, config, audit, getCompaction) {
+function renderStatus(ctx, config, audit, getCompaction, invocation) {
   const lines = ['[context-maid] status']
   let engineNote = ''
   try {
@@ -131,12 +136,42 @@ function renderStatus(ctx, config, audit, getCompaction) {
   } else {
     lines.push('近 7 天策展: （无记录）')
   }
-  // C6（2026-09-09）：PIN 锚点校验最近一次结果——把"软保护有没有生效"变成可看的数字
+  // C6（2026-09-09）+ MAID-B12（2026-09-21）：PIN 校验改报**近 N 次分布**。
+  // 只看最近一次 = 幸存者偏差；实测 18 次里既有 4/4 也有 0/4 全丢，只看一条会得出相反结论。
   try {
-    const all = typeof audit?.recent === 'function' ? audit.recent(30) : []
-    const pinRow = all.find((r) => r.op === 'pin')
-    if (pinRow) {
-      lines.push('PIN 锚点校验（最近）: ' + String(pinRow.summary ?? '').replace(/^PIN 锚点校验：/, ''))
+    const all = typeof audit?.recent === 'function' ? audit.recent(200) : []
+    const h = summarizePinHistory(all, { maxRuns: 20 })
+    if (h.runs > 0) {
+      const dist = h.buckets.map((b) => b.key + ' ×' + b.n).join('、')
+      lines.push('PIN 锚点校验（近 ' + h.runs + ' 次）: ' + (dist || '（全为不可校验）')
+        + (h.noAnchorRuns > 0 ? ' · 无锚点 ' + h.noAnchorRuns + ' 次' : '')
+        + (h.verifiableRatio === null ? '' : ' · 可校验 ' + Math.round(h.verifiableRatio * 100) + '%'))
+      if (h.zeroRuns > 0) {
+        lines.push('  ⚠ ' + h.zeroRuns + ' 次把 PIN 锚点全丢了（0/N）——软保护不是「永远有效」')
+      }
+    } else {
+      lines.push('PIN 锚点校验: （无记录）')
+    }
+  } catch { /* 诊断失败不阻断 */ }
+  // MAID-B14（2026-09-21）：本会话折叠深度。深度是「这个会话还要不要继续」的判据，
+  // 此前只能靠 count(op=fold) group by session_id 反推。
+  try {
+    const sid = String(invocation?.agent?.session?.id ?? '')
+    if (!sid) {
+      lines.push('foldDepth: （无法解析当前会话）')
+    } else {
+      const rows = typeof audit?.recent === 'function' ? audit.recent(500) : []
+      let n = 0
+      let maxDepth = 0
+      for (const r of rows) {
+        if (!r || r.op !== 'fold' || String(r.sessionId ?? '') !== sid) continue
+        n += 1
+        const m = /"foldDepth"\s*:\s*(\d+)/.exec(String(r.detail ?? ''))
+        if (m) maxDepth = Math.max(maxDepth, Number(m[1]))
+      }
+      const depth = Math.max(n, maxDepth)
+      lines.push('foldDepth: ' + depth + '（本会话）'
+        + (depth > 10 ? '  ⚠ 超过阈值 10——该考虑收尾或开新会话了' : ''))
     }
   } catch { /* 诊断失败不阻断 */ }
   let recent = []

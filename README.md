@@ -40,7 +40,7 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | **先归档后压缩** | 折叠摘要经 ACP ledger 归档（agent_authored/single_observation/experience/private，sourceRef 含 compactionId）；归档为普通 observation，无 supersedes 链 |
 | **阈值用户可调** | trigger.userRatio 主旋钮（默认 0.40）映射官方 thresholdRatio；slim.thresholdChars/headChars/tailChars 可调 |
 | **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点（registerSummarizationResolver） |
-| **可观测** | 压缩（fold）/落地瘦身（slim）/垃圾清扫（sweep）写审计行，每行显式声明 `unit`（slim/sweep=chars，fold=estTokens）与 `producer`；**C6 v1（2026-09-09）**：压缩后对 PIN 事实做确定性锚点校验（`op=pin`，命中率 + 丢失锚点 + 不可校验事实数）；/context-maid status 查引擎/瘦身器接线、配置与最近一次 PIN 校验结果 |
+| **可观测** | 压缩（fold）/落地瘦身（slim）/垃圾清扫（sweep）写审计行，每行显式声明 `unit`（slim/sweep=chars，fold=estTokens）与 `producer`；**C6 v1（2026-09-09）**：压缩后对 PIN 事实做确定性锚点校验（`op=pin`，命中率 + 丢失锚点 + 不可校验事实数）；**B12/B14（2026-09-21）**：`op=pin` 同时报「可校验 V/F」与「命中 H/T」（只报命中率会把「没得验」算成「验过了没丢」），全丢时 warn；`fold` 行的 `detail` 带 `foldDepth`。`/context-maid status` 查引擎/瘦身器接线、配置、**PIN 校验近 20 次分布**、**本会话折叠深度**与最近记录 |
 
 ## Agent 安装指南（面向自动化装配）
 

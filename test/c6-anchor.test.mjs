@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { extractAnchors, verifyAnchors, pinAnchorReport } from '../src/anchor.mjs'
+import { extractAnchors, verifyAnchors, pinAnchorReport, summarizePinHistory } from '../src/anchor.mjs'
 import openMaidAudit from '../src/audit.mjs'
 
 test('extractAnchors：抽取路径 / 引号字面量 / key=value / 全大写常量', () => {
@@ -74,7 +74,15 @@ test('engine._verifyPinAnchors：落 audit op=pin（带 unit/producer），无�
   assert.equal(rows[0].unit, 'chars')
   assert.equal(rows[0].producer, 'dsh-context-maid')
   assert.equal(rows[0].sessionId, 'sess-1')
-  assert.ok(rows[0].summary.includes('2/2 命中'), rows[0].summary)
+  // B12（2026-09-21）：summary 口径改为「可校验 V/F · 命中 H/T」——命中率的分母是**锚点数**，
+  // 而锚点只从部分事实里抽得出来，两个口径必须同现（旧断言 '2/2 命中' 已随之更新）。
+  assert.ok(rows[0].summary.includes('可校验 1/1'), rows[0].summary)
+  assert.ok(rows[0].summary.includes('命中 2/2'), rows[0].summary)
+  const detail = JSON.parse(rows[0].detail)
+  assert.equal(detail.hits, 2)
+  assert.equal(detail.total, 2)
+  assert.equal(detail.factsCount, 1)
+  assert.equal(detail.verifiableFacts, 1)
   // 空 facts → 不落行（没东西可校验，不制造噪声）
   engine._verifyPinAnchors([], { summary: [{ type: 'text', text: 'x' }] }, { session: {} })
   assert.equal(rows.length, 1)
@@ -92,4 +100,52 @@ test('audit：unit / producer 列落库并可回读（v0.3.1 迁移）', (t) => 
   assert.equal(byOp.slim.unit, 'chars')
   assert.equal(byOp.fold.unit, 'estTokens')
   assert.equal(byOp.slim.producer, 'dsh-context-maid')
+})
+
+// —— MAID-B12（2026-09-21）：口径诚实化 ——
+
+test('B12：pinAnchorReport 分开报「可校验率」与「命中率」', () => {
+  const facts = ['改 src/store.mjs 里的逻辑', '配置 timeZone=Asia/Shanghai', '今天天气不错', '纯自然语言的偏好']
+  const r = pinAnchorReport(facts, '本次改动在 src/store.mjs 内')
+  assert.equal(r.factsCount, 4)
+  assert.equal(r.verifiableFacts, 2, '只有 2 条事实抽得出字面锚点')
+  assert.equal(r.verifiableRatio, 0.5)
+  assert.equal(r.unverifiableFacts, 2)
+  assert.equal(r.total, 2)
+  assert.equal(r.ratio, 0.5, '命中 1/2')
+})
+
+test('B12：summarizePinHistory 出分布而不是只看最近一次', () => {
+  const mk = (hits, total, facts, vf) => ({
+    op: 'pin',
+    detail: JSON.stringify({ anchors: Array.from({ length: total }, () => 'a'), missed: [], hits, total, factsCount: facts, verifiableFacts: vf, verifiableRatio: vf / facts }),
+  })
+  const h = summarizePinHistory([mk(4, 4, 16, 4), mk(4, 4, 16, 4), mk(0, 4, 16, 4)])
+  assert.equal(h.runs, 3)
+  assert.equal(h.zeroRuns, 1, '全丢的次数必须可见')
+  assert.deepEqual(h.buckets.map((b) => b.key + '×' + b.n), ['4/4×2', '0/4×1'])
+  assert.equal(h.facts, 48)
+  assert.equal(h.verifiableFacts, 12)
+  assert.equal(h.verifiableRatio, 0.25)
+})
+
+test('B12：旧行没有 hits/total 时用 anchors-missed 反推（不能只看 missed.length）', () => {
+  const rows = [
+    { op: 'pin', detail: JSON.stringify({ anchors: ['a', 'b', 'c', 'd'], missed: ['a', 'b', 'c', 'd'], ratio: 0 }) },
+    { op: 'pin', detail: JSON.stringify({ anchors: ['a', 'b'], missed: [], ratio: 1 }) },
+    { op: 'fold', detail: 'not json' },
+    { op: 'pin', detail: '{ 半截 JSON' },
+  ]
+  const h = summarizePinHistory(rows)
+  assert.equal(h.runs, 3, '只统计 op=pin')
+  assert.equal(h.zeroRuns, 1)
+  assert.equal(h.noAnchorRuns, 1, '损坏/无锚点的行单独计，不混进分布')
+  assert.deepEqual(h.buckets.map((b) => b.key + '×' + b.n), ['2/2×1', '0/4×1'])
+})
+
+test('B12：无可校验锚点的行计入 noAnchorRuns，不出现在桶里', () => {
+  const h = summarizePinHistory([{ op: 'pin', detail: JSON.stringify({ anchors: [], missed: [], ratio: null }) }])
+  assert.equal(h.runs, 1)
+  assert.equal(h.noAnchorRuns, 1)
+  assert.equal(h.buckets.length, 0)
 })
