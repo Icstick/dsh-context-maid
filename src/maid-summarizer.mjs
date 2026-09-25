@@ -85,7 +85,7 @@ export async function maidSummarizeWithLlm(ctx, target, input, agent, signal) {
     ...(input?.messages ?? []),
     createUserMessage({
       content: [{ type: 'text', text: COMPACTION_INSTRUCTION }],
-      source: { kind: 'plugin', plugin: 'dsh-context-maid' },
+      source: { kind: 'plugin:dsh-context-maid' },
     }),
   ]
   const options = {
