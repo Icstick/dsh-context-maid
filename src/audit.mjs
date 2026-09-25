@@ -52,10 +52,28 @@ export function openMaidAudit(dir) {
     } catch { /* 审计失败不阻断策展 */ }
   }
 
+  // MAID-B16（2026-09-25）：recent() 的行必须与 append() 的入参**同形**。
+  //
+  // 原写法只补了 archiveIds，其余多词列（session_id / tokens_before / tokens_after）
+  // 仍是 SQLite 原生蛇形。而消费者读的是 camelCase ——
+  //   archiver.mjs nextFoldDepth 读 r.sessionId、commands.mjs status 也读它 ——
+  // 于是 r.sessionId 恒 undefined：**B14 的「从审计库播种 foldDepth」在生产路径上恒不生效**
+  // （进程重启后每次都从 1 重来，status 的 foldDepth 恒显示 0）。
+  // 老测试用 { sessionId } 的 mock 行，形状与真实行不一致，所以一直没抓住（见 test/m8.test.mjs）。
+  //
+  // 做法：**只增不删**。保留原生列（fold-verify 的测试照实断言过 rows[0].session_id），
+  // 只把 camelCase 补齐。读侧容忍两种形状，写侧不因此改动。
+  const toRow = (r) => ({
+    ...r,
+    sessionId: String(r.session_id ?? ''),
+    tokensBefore: r.tokens_before ?? null,
+    tokensAfter: r.tokens_after ?? null,
+    archiveIds: JSON.parse(r.archive_ids),
+  })
+
   function recent(limit = 20) {
     try {
-      return db.prepare('SELECT * FROM maid_audit ORDER BY id DESC LIMIT ?').all(limit)
-        .map((r) => ({ ...r, archiveIds: JSON.parse(r.archive_ids) }))
+      return db.prepare('SELECT * FROM maid_audit ORDER BY id DESC LIMIT ?').all(limit).map(toRow)
     } catch { return [] }
   }
 
