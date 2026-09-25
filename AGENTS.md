@@ -12,18 +12,19 @@ dsh-context-maid：DeepSeek Harness 的自动上下文策展插件。五级策�
 - `src/engine.mjs` —— MaidCompactionEngine extends BasicCompactionEngine（阈值映射 toOfficialConfig；summarize 覆写 = PIN 注入 + 智能路由 + 官方回落）
 - `src/slimmer.mjs` —— MaidSlimmer extends ToolResultPruner（内容感知瘦身）
 - `src/sweeper.mjs` —— 垃圾清扫：scanSweepCandidates（真实事件模型 + surface 视角纯扫描）→ model-free stub（stubToolResultNode 在 slimmer.mjs）
-- `src/pinner.mjs` —— PIN 收集（ACP queryObservations 高权威 + WC goal + pin.extra）
+- `src/pinner.mjs` —— PIN 收集（ACP queryObservations 高权威 + WC goal + pin.extra）；`planPinInstruction` 外露注入记账（kept/omitted）
+- `src/fold-verify.mjs` —— 折叠后「不可丢约束」校验：折叠前清单摘要（稳定标识 = sha256，非 LLM）+ 折叠后 ok/partial/lost 三态 + 审计分布（`anchor.mjs` 负责锚点原语）
 - `src/archiver.mjs` —— 先归档后压缩（compaction/summary → ACP append；audit-first）
 - `src/audit.mjs` / `commands.mjs` —— 策展审计库 / /context-maid 命令（status/config/help）
 - `src/maid-summarizer.mjs` —— M4 摘要 LLM 调用（复刻官方调用语义 + resolver 链）
-- `test/*.test.mjs` —— node:test（m1-m7/smoke/golden-regression；m5=eventSlim、m6=sweep、m7=死键/PIN 预算）
+- `test/*.test.mjs` —— node:test（m1-m7/smoke/golden-regression/c6-anchor/fold-verify；m5=eventSlim、m6=sweep、m7=死键/PIN 预算、fold-verify=折叠后约束校验）
 - `docs/` —— design.md（设计）、DEVELOPMENT-PLAN.md（backlog）、adr/（决策记录）
 - `cordis.patch.yml` —— bundle 装配补丁
 
 ## 铁律（违反会被打回）
 
 1. **官方引擎必须 disable**：cordis 同 key 服务单提供者——compaction-basic/tool-result-pruner 不禁用则 maid 自动旁路（防呆 warn）；README 装配说明与此一致。
-2. **未接线不宣称**：能力现状以 README 为准——已接线：FOLD 接管/SLIM（eventSlim + 折叠压力路径）/SWEEP（M6 model-free stub）/归档/PIN 摘要注入；未接线：sweep aggressive 规则未扩展、C6 质量抽检未做——不得夸大（P0-2 教训，golden CM 守护）。死键已随 0.3.0 删除（minTokens/pin.inject/allowLocal）。
+2. **未接线不宣称**：能力现状以 README 为准——已接线：FOLD 接管/SLIM（eventSlim + 折叠压力路径）/SWEEP（M6 model-free stub）/归档/PIN 摘要注入/**折叠后约束校验（2026-09-25：C6 v1 锚点比对 + 折叠前清单摘要 + 注入记账 + ok/partial/lost 三态，默认只告警不阻塞）**；未接线：sweep aggressive 规则未扩展、C6 的 shadowed 原文侧抽检未做、**折叠后 session surface 侧比对未做（观测点时序不成立，见 docs/design.md §9.8）**——不得夸大（P0-2 教训，golden CM 守护）。死键已随 0.3.0 删除（minTokens/pin.inject/allowLocal）。
 3. **Config 键不进官方透传**：maid 自持键（点号键）不得进 toOfficialConfig（官方 validateKeys 拒未知键）；嵌套写法不生效，用扁平键。
 4. **审计 first**：策展事件无条件留痕（区分「事件未达」与「路径断开」）；归档走 ACP 时 block → 脱敏重试一次。
 5. **改代码必须补测试**：test/ 下同名 `.test.mjs`；golden regression 守护历史 issue。

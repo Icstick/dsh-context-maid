@@ -40,6 +40,11 @@ export const Config = z.object({
   'sweep.aggressive': z.boolean().default(false), // 未接线（2026-09-07 审计 P0-2）：sweeper.mjs 只产建议区间，无执行器/调用方；保留意见：是否加审批门待用户后续定
   // —— 压缩 ——
   'fold.retainRatio': z.number().step(0.01).min(0.01).max(0.9).default(0.16),
+  // 折叠后「不可丢约束」校验（2026-09-25）：折叠前记清单摘要（PIN 集 + 稳定标识），
+  // 折叠后校验约束是否仍可用，三态结论（ok/partial/lost）落审计 op=pin。
+  // **默认只告警不阻塞**——本仓「审计 first」，校验结论不改写折叠行为。
+  // 刻意不提供「阻断折叠」开关：软保护本就不可靠，把校验变成硬门会制造新的失败面。
+  'fold.verify.enabled': z.boolean().default(true),
   // —— 钉扎（M3）——
   'pin.enabled': z.boolean().default(true),
   'pin.extra': z.array(z.string()).default([]), // 用户显式钉扎清单（如 ['必须用 pnpm']）

@@ -77,37 +77,53 @@ export async function collectPinnedFacts(ctx, opts = {}) {
  *  追加 [+N more] 计数标注。 */
 export const PIN_BUDGET_CHARS = 1800
 
-/** 渲染成给摘要模型的 PIN 指令段（插在被压区域与官方压缩指令之间）。 */
-export function buildPinInstruction(facts, budget = PIN_BUDGET_CHARS) {
-  if (!facts || facts.length === 0) return ''
-  const kept = []
+/**
+ * 渲染成给摘要模型的 PIN 指令段（插在被压区域与官方压缩指令之间）。
+ *
+ * 2026-09-25（折叠后约束校验）：除了 text，还必须外露 kept/omitted 这两个**注入记账**数。
+ * 旧实现只返回 text，预算截断信息在调用侧不可见——于是被截断（从未发给模型）的事实
+ * 也被拿去抽锚点、算进 missed，**我们自己的截断被记成了模型犯错**，命中率被系统性低估。
+ * @param {string[]} facts
+ * @param {number} [budget]
+ * @returns {{text: string, kept: number, omitted: number, budget: number}}
+ */
+export function planPinInstruction(facts, budget = PIN_BUDGET_CHARS) {
+  const list = Array.isArray(facts) ? facts : []
+  if (list.length === 0) return { text: '', kept: 0, omitted: 0, budget }
+  const keptLines = []
   let total = 0
-  for (const f of facts) {
+  for (const f of list) {
     const item = '- ' + f
     if (total + item.length > budget) break
-    kept.push(item)
+    keptLines.push(item)
     total += item.length
   }
-  const omitted = facts.length - kept.length
-  const list = omitted > 0 ? kept.concat(['- [+' + omitted + ' more facts omitted — PIN 预算 ' + budget + ' chars]']) : kept
-  return '\n[context-maid pin] The following facts are pinned by the user or carry high authority. '
-    + 'They MUST be reflected in the checkpoint summary (preserve their meaning and key details):\n'
-    + list.join('\n')
+  const omitted = list.length - keptLines.length
+  const lines = omitted > 0
+    ? keptLines.concat(['- [+' + omitted + ' more facts omitted — PIN 预算 ' + budget + ' chars]'])
+    : keptLines
+  const text = [
+    '',
+    '[context-maid pin] The following facts are pinned by the user or carry high authority. '
+      + 'They MUST be reflected in the checkpoint summary (preserve their meaning and key details):',
+    ...lines,
+  ].join(String.fromCharCode(10))
+  return { text, kept: keptLines.length, omitted, budget }
 }
 
-/** 构造 PIN 注入消息（summarize 前插进被压区域重放）。
- *
- *  2026-09-10：source 不再声明自造值 form:'pin'——form 是官方语义闭集词表
- *  （instructions/catalog/snapshot/notice/relay/recall），表外的值会让
- *  session-format 的 v2→v3 迁移拒收**整条会话**（本机 25 条历史会话因此打不开）。
- *  不声明 form 是官方默认（opaque 上下文行），渲染与未知 form 完全一致。 */
+/** 渲染成 PIN 指令段（planPinInstruction 的薄封装；保留原签名与返回文本）。 */
+export function buildPinInstruction(facts, budget = PIN_BUDGET_CHARS) {
+  return planPinInstruction(facts, budget).text
+}
+
+/** 构造 PIN 注入消息；生产者归属保留，且不声明未定义的 form。 */
 export function pinPluginMessage(text) {
   return {
     id: randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: 'dsh-context-maid' },
+    source: { kind: 'plugin:dsh-context-maid' },
   }
 }
 
-export default { collectPinnedFacts, buildPinInstruction, pinPluginMessage }
+export default { collectPinnedFacts, planPinInstruction, buildPinInstruction, pinPluginMessage }

@@ -34,13 +34,26 @@ dsh-context-maid 把这两件事分开处理：**垃圾按垃圾清，重点按�
 | 能力 | 说明 |
 |---|---|
 | **接管官方压缩** | MaidCompactionEngine 继承 BasicCompactionEngine 注册为 ctx.compaction（须 disable 官方 compaction-basic）；阈值经 trigger.userRatio 映射官方 thresholdRatio，官方 pressure/overflow/manual 三路触发全保留 |
-| **压缩摘要增强** | 覆写官方 summarize：折叠前把高权威 PIN 事实注入摘要指令（软保护——官方压缩从头部压连续段，无法硬性排除中段）；摘要模型可配（便宜/本地/智能路由 resolver 链，回落官方） |
+| **压缩摘要增强** | 覆写官方 summarize：折叠前把高权威 PIN 事实注入摘要指令（软保护——官方压缩从头部压连续段，无法硬性排除中段）；注入消息用 `source.kind: plugin:dsh-context-maid` 标记生产者；摘要模型可配（便宜/本地/智能路由 resolver 链，回落官方） |
 | **tool 输出瘦身** | MaidSlimmer 继承官方 ToolResultPruner 注册为 ctx.toolResultPruner：错误留尾、JSON 留骨架、日志留头尾；**eventSlim 落地即瘦身**（M5：每次 step 前对新增超预算 tool 结果增量瘦身，默认开）+ 官方折叠压力路径全量瘦身 |
 | **垃圾清扫（sweep）** | sweeper 确定性识别（M6：真实事件模型 + surface 视角）——同工具同参数重复读取/失败后重试成功的前序结果 → **model-free stub 整节点清理**（无 LLM）；sweep.enabled 默认 false，开启后 step 边界节流清扫 |
 | **先归档后压缩** | 折叠摘要经 ACP ledger 归档（agent_authored/single_observation/experience/private，sourceRef 含 compactionId）；归档为普通 observation，无 supersedes 链 |
 | **阈值用户可调** | trigger.userRatio 主旋钮（默认 0.40）映射官方 thresholdRatio；slim.thresholdChars/headChars/tailChars 可调 |
 | **compact 模型可配** | 摘要可用便宜小模型/本地模型（OpenAI 兼容网关），也可接智能路由端点（registerSummarizationResolver） |
-| **可观测** | 压缩（fold）/落地瘦身（slim）/垃圾清扫（sweep）写审计行，每行显式声明 `unit`（slim/sweep=chars，fold=estTokens）与 `producer`；**C6 v1（2026-09-09）**：压缩后对 PIN 事实做确定性锚点校验（`op=pin`，命中率 + 丢失锚点 + 不可校验事实数）；**B12/B14（2026-09-21）**：`op=pin` 同时报「可校验 V/F」与「命中 H/T」（只报命中率会把「没得验」算成「验过了没丢」），全丢时 warn；`fold` 行的 `detail` 带 `foldDepth`。`/context-maid status` 查引擎/瘦身器接线、配置、**PIN 校验近 20 次分布**、**本会话折叠深度**与最近记录 |
+| **可观测** | 压缩（fold）/落地瘦身（slim）/垃圾清扫（sweep）写审计行，每行显式声明 `unit`（slim/sweep=chars，fold=estTokens）与 `producer`；**C6 v1（2026-09-09）**：压缩后对 PIN 事实做确定性锚点校验（`op=pin`，命中率 + 丢失锚点 + 不可校验事实数）；**B12/B14（2026-09-21）**：`op=pin` 同时报「可校验 V/F」与「命中 H/T」（只报命中率会把「没得验」算成「验过了没丢」），全丢时 warn；`fold` 行的 `detail` 带 `foldDepth`。**折叠后约束校验（2026-09-25）**：折叠前记「不可丢约束清单」摘要（PIN 集合 + 每条约束的 sha256 稳定标识 + 注入记账），折叠后给出三态结论 `ok / partial / lost` 并列出**具体丢了哪些约束**（`lostIds`），`detail` 增 `status`/`checked`/`lostIds`/`manifestIds`/`injectedFacts`/`notInjectedFacts`；**被 PIN 预算截断、从未发给模型的事实单列，不再被算成「模型丢了」**。`/context-maid status` 查引擎/瘦身器接线、配置、**PIN 校验近 20 次分布**、**折叠后约束校验三态分布**、**本会话折叠深度**与最近记录 |
+
+> **折叠后约束校验的边界（未接线，勿夸大）**：校验只比对**摘要正文**里的字面锚点，**不读折叠后的
+> session surface**。不是省事——观测点在时序上不成立：官方 `compaction-basic` 先 append
+> `compaction/summary`、**其后**才 append 带 `surfaceOp: replace` 的 checkpoint 消息
+> （`dsh-compaction-basic/lib/index.js:589` → `:605`），而 maid 的 `summarize` 钩子在两者之前被调用；
+> 此刻读 surface 拿到的是**折叠前**的节点，任何「约束仍在上下文里」的判定都会假绿。
+> 也因此，**校验结论默认只告警不阻塞**：`fold.verify.enabled=false` 只关掉校验与留痕，
+> 不改写任何折叠行为；本仓也刻意**不提供**「校验失败即阻断折叠」的开关（软保护本就不可靠，
+> 把校验变硬门只会制造新的失败面）。
+
+> 另一个口径事实：约束分两种下场——`notInjectedFacts`（我们自己没发出去：超 PIN 预算被整条截断）
+> 与 `missed/lostIds`（发出去了、摘要没带）。混在一起算会让命中率被系统性低估，排查方向也会从一开始就错。
+
 
 ## Agent 安装指南（面向自动化装配）
 
@@ -131,6 +144,7 @@ maid 接管官方引擎（继承 BasicCompactionEngine 注册为 ctx.compaction�
 | slim.headChars / tailChars | 800 / 800 | 瘦身保留预算 |
 | sweep.enabled / aggressive | false / false | 垃圾清扫（M6）：开启后 step 边界节流识别并 stub 结构性垃圾（aggressive 档规则未扩展，保留开关） |
 | fold.retainRatio | 0.16 | 压缩保留尾比例 |
+| fold.verify.enabled | true | **折叠后约束校验**（2026-09-25）：折叠前记「不可丢约束清单」摘要（PIN 集合 + sha256 稳定标识 + 注入记账），折叠后校验约束是否仍可用，`ok/partial/lost` 落审计 `op=pin`。**默认只告警不阻塞**；置 false = 不校验、不留痕，折叠行为不变 |
 | pin.enabled / extra | true / [] | 钉扎软保护：折叠摘要注入高权威事实（M3）；逐轮注入由 ACP Composer 单轨承担（pin.inject 已删 0.3.0） |
 | archive.enabled | true | 先归档后压缩（需 ACP） |
 | summarization.provider / model | '' / '' | **摘要模型可配**（空=跟随对话模型；可填便宜模型或本地 OpenAI 兼容网关） |

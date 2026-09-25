@@ -65,7 +65,11 @@ dsh-context-maid（独立 cordis 插件）
 │
 ├─ 模块：
 │  ├─ classifier.mjs    内容分级（PIN/KEEP/SLIM/SWEEP/FOLD）——确定性规则引擎
-│  ├─ pinner.mjs        钉扎段管理：识别 PIN 内容并保护（压缩范围排除 + 必要时前置）
+│  ├─ pinner.mjs        钉扎段管理：识别 PIN 内容并保护（压缩范围排除 + 必要时前置）；
+│  │                     planPinInstruction 外露注入记账 kept/omitted
+│  ├─ anchor.mjs        （实现）确定性锚点原语：抽字面锚点 + 归一化包含比对（零 LLM）
+│  ├─ fold-verify.mjs   （实现，2026-09-25）折叠后「不可丢约束」校验：折叠前清单摘要
+│  │                     （PIN 集合 + sha256 稳定标识）+ 三态结论 ok/partial/lost
 │  ├─ slimmer.mjs       tool 输出内容感知瘦身（可注册为 toolResultPruner 服务替换官方版）
 │  ├─ sweeper.mjs       无效日志/僵尸清理（用官方 compactRegion 事务移除）
 │  ├─ trigger.mjs       触发策略：可调阈值预检 + 事件触发 + 溢出回退 + 手动
@@ -95,6 +99,7 @@ dsh-context-maid（独立 cordis 插件）
 - **节流与防抖**：同 turn 至多一次 FOLD；每日上限；与 ACP consolidation 错峰（后台队列）
 
 ### 5.2 钉扎段（pinner.mjs）——保护工作流/记忆/用户重点
+- PIN 与摘要指令消息使用 `source.kind: plugin:dsh-context-maid`，不携带旧式 `source.plugin` 字段。
 - PIN 内容来源：
   a) ACP authority 判定 user_explicit / user_correction / system_policy 的原文（如 ACP 在线，调 ctx.acp.query authority 过滤）
   b) 本插件自维护轻量判定：消息文本含用户指令特征 + 长度阈值 + 关键词（"记住/重点/必须/不要/改成"）
@@ -365,8 +370,66 @@ session-0d45cbf0   4 层      session-f853c934  2 层
    10 个 60 字符的锚点就能超过 500，写出**半截 JSON**——而 status 的分布正依赖它可解析。
    命中数改为独立字段，裁剪数组不再影响口径。
 
----
+## 9.8 折叠后「不可丢约束」校验（2026-09-25）
 
+### 为什么是「校验」而不是「更好的摘要」
+
+同一批论文的实证结论一致：**压缩的失败点不在摘要质量，而在约束与结构的丢失**
+（arXiv 2608.11242 / 2605.08580 / 2608.16370）。另一篇白盒实测更直接地打在 skill 机制上——
+同一模型、同一任务，**干净上下文 10 过 8，污染上下文 10 过 3**（arXiv 2607.17937）：
+「载入」不等于「约束生效」。落到 maid 上就是：折叠前把 PIN 注入摘要指令只是**请求**，
+折叠后必须**校验**它还在不在。此前只有前半（`_verifyPinAnchors` 的 C6 v1），
+本次把后半补齐，并把结论做成可审计的三态。
+
+### 三个组成部分
+
+1. **折叠前的清单摘要**（`buildConstraintManifest`）。记录 PIN 集合 + 每条约束的**稳定标识**：
+   `sha256(kind + NUL + 归一化全文)` 前 10 位十六进制，其中 `kind` 由事实的固定前缀确定性判定
+   （`[ACP <authority>]` / `[goal]` / `[user-pinned]`）。标识只依赖文本，跨折叠可比对，**不引入任何模型调用**。
+2. **注入记账**（`pinner.planPinInstruction`）。PIN 有 1800 字符预算，超预算整条丢弃。
+   旧实现只返回渲染文本，调用侧看不见截断——于是这些**从未发给模型**的事实也被拿去抽锚点、
+   算进 `missed`。这不是小误差：它把**我们自己的截断记成了模型犯错**，命中率被系统性低估，
+   而且排查方向从一开始就是错的。现在 `kept`/`omitted` 外露，审计里分成两个字段：
+   `notInjectedFacts`（我们自己没发出去）与 `missed`/`lostIds`（发出去了、摘要没带）。
+3. **折叠后的三态结论**（`verifyFoldConstraints`）。状态互斥，且刻意把三个「非丢失」情形摘出去：
+
+   | status | 含义 | 是否告警 |
+   |---|---|---|
+   | `ok` | 全部可校验锚点都在（V/V） | 否 |
+   | `partial` | 部分丢失（0 < hits < checked），`lostIds` 列出丢了哪些约束 | 否（只入审计） |
+   | `lost` | 完全丢失（hits = 0 且 checked > 0） | **warn** |
+   | `unverifiable` | 注入了但一条字面锚点都抽不出——「没得验」≠「验过了没丢」 | 否 |
+   | `not-injected` | 一条都没注入（未启用 / 预算全截断 / 收集路径断开）——**路径问题，不是模型丢的** | **warn** |
+   | `no-summary` | 摘要正文为空，无从校验（不冒充 lost，避免假警报） | 否 |
+   | `idle` | 清单为空，无约束可校验——不制造噪声 | 否 |
+
+   `partial` 只入审计不 warn 是刻意的：本机实测 partial 占比过半（§9.7），每次 fold 都告警会变成噪声墙，
+   结果就是没人再看告警。**只对两个硬信号开口**：完全丢失、从未注入。
+
+### 边界（诚实声明 —— 铁律 2）
+
+**未接线：折叠后 session surface 侧的比对。** 不是省事，是**观测点在时序上不成立**。
+官方 `dsh-compaction-basic` 的 `commitCompactionBody` 先 `session.append('compaction/summary', …)`
+（`lib/index.js:589`），**其后**才 append 携带 `surfaceOp: { op: 'replace', start, end }` 的 checkpoint 消息
+（`:605`）；而 maid 的 `summarize` 钩子由 `summarizeCompaction`（`:550`）调用，在两者**之前**。
+此刻读 `session.surface` 拿到的是**折叠前**的节点集合——任何「约束仍在折叠后上下文里」的判定都会返回
+「在」，也就是**假绿**。这种检查比不检查更糟：它会给出一个稳定漂亮的 100%，把真实丢失掩盖掉。
+故只对**摘要正文**（真正替换被压区间的那段文本）做字面锚点比对，并把这个限制写进 README 与 AGENTS.md。
+
+### 默认只告警不阻塞
+
+校验结论**不改写任何折叠行为**。`fold.verify.enabled`（maid 自持点号键，默认 true）置 false 时
+不校验、不留痕，折叠路径不变。本仓**刻意不提供**「校验失败即阻断折叠」的开关：软保护本就不可靠，
+把校验变成硬门只会制造一个新的失败面（折叠被卡住）而不解决丢失。这与「审计 first」（铁律 4）一致——
+先让丢失**可见**，再谈处置。
+
+### 配置面（铁律 3）
+
+`fold.verify.enabled` 是 maid 自持键，**不进 `toOfficialConfig`**（官方 `validateKeys` 拒未知键）。
+`test/fold-verify.test.mjs` 里有一条测试直接钉住这一点，同时确保阈值语义没有被顺手改动
+（`trigger.userRatio` → `thresholdRatio`、`fold.retainRatio` → `retainRatio` 映射不变）。
+
+---
 ## 10. 参考
 
 - 本地：dsh-compaction-survey.md §5 扩展点 / §6 缺口 / §7 接口面

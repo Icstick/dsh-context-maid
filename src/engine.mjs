@@ -12,7 +12,18 @@ import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { maidSummarizeWithLlm } from './maid-summarizer.mjs'
 import { scanSweepCandidates } from './sweeper.mjs'
 import { stubToolResultNode, getTokenMeter } from './slimmer.mjs'
-import { pinAnchorReport } from './anchor.mjs'
+import { buildConstraintManifest, verifyFoldConstraints } from './fold-verify.mjs'
+
+/** 折叠后约束校验的状态标签（审计 summary 用；取值域见 fold-verify.FOLD_VERIFY_STATUSES）。 */
+const FOLD_VERIFY_LABEL = {
+  ok: 'ok（约束全部保留）',
+  partial: 'partial（部分丢失）',
+  lost: 'lost（完全丢失）',
+  unverifiable: 'unverifiable（无字面锚点，无从校验）',
+  'not-injected': 'not-injected（未注入，路径断开）',
+  'no-summary': 'no-summary（摘要为空，无从校验）',
+  idle: 'idle（无约束）',
+}
 import { appendFileSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 
@@ -210,9 +221,10 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     // PIN 事实收集（两种路径共用）
     let pinMessage = null
     let pinFacts = []
+    let pinPlan = null
     try {
       if (maid['pin.enabled'] !== false) {
-        const { collectPinnedFacts, buildPinInstruction, pinPluginMessage } = await import('./pinner.mjs')
+        const { collectPinnedFacts, planPinInstruction, pinPluginMessage } = await import('./pinner.mjs')
         const cwd = agent?.session?.cwd ?? ''
         const facts = await collectPinnedFacts(this.ctx, {
           scopeId: 'user-global',
@@ -220,9 +232,12 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
           extra: Array.isArray(maid['pin.extra']) ? maid['pin.extra'] : [],
         })
         pinFacts = Array.isArray(facts) ? facts : []
-        const pinBlock = buildPinInstruction(facts)
-        if (pinBlock) {
-          pinMessage = pinPluginMessage(pinBlock)
+        // 2026-09-25：PIN 预算截断掉的事实**从未发给模型**——把注入记账留在手边，
+        // 否则校验阶段会把「我们自己没发出去」算成「模型丢了」。
+        const plan = planPinInstruction(pinFacts)
+        pinPlan = { injected: plan.kept, omitted: plan.omitted, budget: plan.budget }
+        if (plan.text) {
+          pinMessage = pinPluginMessage(plan.text)
         }
       }
     } catch (err) {
@@ -240,7 +255,7 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
         try {
           this.ctx.logger?.info?.('[context-maid] summarize routed to ' + resolved.provider + '/' + resolved.model)
         } catch { /* ignore */ }
-        this._verifyPinAnchors(pinFacts, result, agent)
+        this._verifyPinAnchors(pinFacts, result, agent, pinPlan)
         return result
       }
     } catch (err) {
@@ -249,67 +264,105 @@ export class MaidCompactionEngine extends BasicCompactionEngine {
     }
     // 回落：官方路径（maid 显式配置经 toOfficialConfig 已映射 summarizationProvider/Model）
     const fallbackResult = await super.summarize({ ...input, messages }, agent, signal)
-    this._verifyPinAnchors(pinFacts, fallbackResult, agent)
+    this._verifyPinAnchors(pinFacts, fallbackResult, agent, pinPlan)
     return fallbackResult
   }
 
   /**
-   * C6 第一版（2026-09-09）：压缩后确定性锚点校验——PIN 事实有没有真的进摘要。
+   * C6 v1（2026-09-09）+ 折叠后约束校验（2026-09-25）：PIN 事实有没有真的进摘要。
    *
    * 此前 PIN 只有「事前注入」这一半：摘要写完没有任何校验，丢没丢全靠猜。
-   * 这里用零 LLM、零新存储的字面锚点比对补上后半（借鉴 dsh-premise-guard），
-   * 结果落 audit op=pin，由 /context-maid status 展示。
-   * 纪律：fail-open——任何异常只 warn，绝不阻断压缩。
+   * 现在补上后半，且把结论做成**三态 + 注入记账**：
+   *   - 折叠前的清单摘要：PIN 集合 + 每条约束的稳定标识（sha256，非 LLM）
+   *   - 折叠后的可用性：ok / partial / lost / unverifiable / not-injected / no-summary
+   *   - injectedFacts vs notInjectedFacts：区分「我们自己没发出去」与「模型丢了」
+   * 结果落 audit op=pin（detail 带 status / lostIds / manifestIds），由 /context-maid status 展示。
+   * 纪律：fail-open——任何异常只 warn，绝不阻断压缩；fold.verify.enabled=false 时不校验不落行。
+   * 边界：只对摘要正文做字面锚点比对，**不读折叠后 session surface**——官方在 append
+   * compaction/summary 之后才做 surface replace（compaction-basic lib/index.js:589→:605），
+   * maid 的 summarize 钩子在其之前，此时 surface 仍是折叠前状态，读它只会假绿。
    * @param {string[]} facts - 收集到的 PIN 事实（原始文本，非渲染块）
    * @param {{summary?: Array<{type: string, text?: string}>}} result - summarize 返回
    * @param {object} agent
+   * @param {{injected?: number, omitted?: number, budget?: number}} [plan] - planPinInstruction 的注入记账
    */
-  _verifyPinAnchors(facts, result, agent) {
+  _verifyPinAnchors(facts, result, agent, plan) {
     try {
+      if (this.maidConfig?.['fold.verify.enabled'] === false) return
       const list = Array.isArray(facts) ? facts : []
       if (list.length === 0) return
+      // 折叠前的清单摘要（确定性；注入记账来自 planPinInstruction，缺省视为全部注入）
+      const injected = Number.isInteger(plan?.injected) ? plan.injected : list.length
+      const manifest = buildConstraintManifest(list, { injected, budget: plan?.budget })
       const blocks = Array.isArray(result?.summary) ? result.summary : []
-      const summaryText = blocks.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n')
-      if (!summaryText.trim()) return
-      const rep = pinAnchorReport(list, summaryText)
-      const hitsN = rep.hits.length
-      const totalN = rep.total
+      const summaryText = blocks.map((b) => (b && typeof b.text === 'string' ? b.text : ''))
+        .join(String.fromCharCode(10))
+      const v = verifyFoldConstraints(manifest, summaryText)
+      const checked = v.checked
       const pct = (x) => (x === null || x === undefined ? '—' : Math.round(x * 100) + '%')
-      // MAID-B12（2026-09-21）：可校验率与命中率必须同时出现。
-      // 只报命中率会把「没得验」悄悄算成「验过了没丢」——16 条事实里常常只有 4 条抽得出锚点。
-      const verifyText = '可校验 ' + rep.verifiableFacts + '/' + rep.factsCount + '（' + pct(rep.verifiableRatio) + '）'
-      const hitText = totalN > 0
-        ? '命中 ' + hitsN + '/' + totalN + '（' + pct(rep.ratio) + '）'
-        : '无可校验锚点'
-      // 全丢是「这次压缩没把 PIN 带进摘要」的硬信号；warn 不阻断（符合仓库保留 warn 级别的惯例）。
-      if (totalN > 0 && hitsN === 0) {
-        this.ctx.logger?.warn?.('[context-maid] PIN 锚点全丢 ' + hitsN + '/' + totalN
-          + '：' + rep.missed.join(', ') + '（本次摘要未携带任何可校验锚点）')
+      const verifiableRatio = manifest.injected > 0 ? manifest.verifiableFacts / manifest.injected : null
+      // MAID-B12（2026-09-21）口径不能丢：可校验率与命中率必须同时出现，
+      // 「没得验」不许被读成「验过了没丢」。
+      const verifyText = '可校验 ' + manifest.verifiableFacts + '/' + manifest.injected
+        + '（' + pct(verifiableRatio) + '）'
+      const hitText = checked > 0
+        ? '命中 ' + v.hits + '/' + checked + '（' + pct(v.ratio) + '）'
+        : '命中 —（无可校验锚点）'
+      // 只对两个硬信号告警（完全丢失 / 从未注入）。partial 只入审计——
+      // 实测 partial 占比过半，每次 fold 都 warn 会变成噪声墙，反而没人看。
+      if (v.status === 'lost') {
+        this.ctx.logger?.warn?.('[context-maid] 折叠后约束完全丢失 0/' + checked + '：'
+          + v.missed.join(', ') + '（本次摘要未携带任何可校验锚点）')
+      } else if (v.status === 'not-injected') {
+        this.ctx.logger?.warn?.('[context-maid] PIN 一条都没发出去（' + list.length
+          + ' 条约束；PIN 预算 ' + (manifest.budget === null ? '—' : manifest.budget)
+          + ' chars）——这是路径问题，不是模型丢失')
       }
-      // audit 把 detail 截到 500 字符，而锚点列表是变长的：
-      // 超限会写出**半截 JSON**，而 /context-maid status 的近 N 次分布正依赖它可解析（B12）。
-      // 故先压长度再落盘；hits/total 是独立字段，裁剪数组不影响计数口径。
+      // audit 把 detail 截到 500 字符，而锚点/标识列表是变长的：
+      // 超限会写出**半截 JSON**，而 /context-maid status 的分布正依赖它可解析（B12）。
+      // 故先压长度再落盘；计数是独立标量字段，裁剪数组不影响口径。
       const pinDetail = {
-        anchors: rep.anchors,
-        missed: rep.missed,
-        hits: hitsN,
-        total: totalN,
-        ratio: rep.ratio,
-        factsCount: rep.factsCount,
-        verifiableFacts: rep.verifiableFacts,
-        verifiableRatio: rep.verifiableRatio,
+        status: v.status,
+        hits: v.hits,
+        total: checked,
+        checked,
+        ratio: v.ratio,
+        collectedFacts: list.length,
+        injectedFacts: manifest.injected,
+        notInjectedFacts: manifest.omitted,
+        factsCount: list.length,
+        verifiableFacts: manifest.verifiableFacts,
+        verifiableRatio,
+        budget: manifest.budget,
+        manifestIdCount: manifest.idCount,
+        manifestIds: manifest.ids.map((x) => x.id),
+        anchors: manifest.anchors,
+        missed: v.missed,
+        lostIds: v.lostIds,
       }
-      while (JSON.stringify(pinDetail).length > 480
-        && (pinDetail.anchors.length > 1 || pinDetail.missed.length > 1)) {
-        if (pinDetail.anchors.length >= pinDetail.missed.length) pinDetail.anchors = pinDetail.anchors.slice(0, -1)
-        else pinDetail.missed = pinDetail.missed.slice(0, -1)
+      const shrinkKeys = ['anchors', 'missed', 'lostIds', 'manifestIds']
+      while (JSON.stringify(pinDetail).length > 480) {
+        let target = null
+        for (const k of shrinkKeys) {
+          const arr = pinDetail[k]
+          if (Array.isArray(arr) && arr.length > 1 && (target === null || arr.length > pinDetail[target].length)) target = k
+        }
+        if (target === null) break
+        pinDetail[target] = pinDetail[target].slice(0, -1)
       }
       this._auditRow({
         op: 'pin',
         producer: 'dsh-context-maid',
         unit: 'chars',
-        summary: 'PIN 锚点校验：' + verifyText + ' · ' + hitText
-          + (rep.unverifiableFacts > 0 ? '；' + rep.unverifiableFacts + ' 条事实无字面锚点（不可校验）' : ''),
+        summary: '折叠后约束校验：' + (FOLD_VERIFY_LABEL[v.status] ?? v.status)
+          + ' · ' + verifyText + ' · ' + hitText
+          + (manifest.omitted > 0
+            ? '；未注入 ' + manifest.omitted + ' 条（PIN 预算 '
+              + (manifest.budget === null ? '—' : manifest.budget) + ' 截断，非模型丢失）'
+            : '')
+          + (manifest.unverifiableFacts > 0
+            ? '；' + manifest.unverifiableFacts + ' 条事实无字面锚点（不可校验）'
+            : ''),
         detail: JSON.stringify(pinDetail),
       }, agent?.session)
     } catch (err) {

@@ -7,6 +7,7 @@
 // 只报最近一次会形成幸存者偏差（实测：只查最近 12 行全是 4/4，误判为「保护 100% 有效」）。
 
 import { summarizePinHistory } from './anchor.mjs'
+import { summarizeFoldVerify } from './fold-verify.mjs'
 
 const USAGE = [
   'Usage: /context-maid <verb>',
@@ -151,6 +152,21 @@ function renderStatus(ctx, config, audit, getCompaction, invocation) {
       }
     } else {
       lines.push('PIN 锚点校验: （无记录）')
+    }
+  } catch { /* 诊断失败不阻断 */ }
+  // 折叠后约束校验（2026-09-25）：三态分布——比「命中率」更直接回答「约束还在不在」。
+  // 未注入 / 无从校验 单独列：这两个都不是「模型丢了」，混进 lost 会误导排查方向。
+  try {
+    const rows = typeof audit?.recent === 'function' ? audit.recent(200) : []
+    const fv = summarizeFoldVerify(rows, { maxRuns: 20 })
+    if (fv.runs > 0) {
+      lines.push('折叠后约束校验（近 ' + fv.runs + ' 次）: ok ' + fv.ok + ' · partial ' + fv.partial + ' · lost ' + fv.lost
+        + (fv.unverifiable > 0 ? ' · 无从校验 ' + fv.unverifiable : '')
+        + (fv.notInjected > 0 ? ' · 未注入 ' + fv.notInjected : '')
+        + (fv.unstated > 0 ? ' · 旧记录 ' + fv.unstated : ''))
+      if (fv.lost > 0) {
+        lines.push('  ⚠ ' + fv.lost + ' 次把约束完全丢了（lost）——软保护不是「永远有效」')
+      }
     }
   } catch { /* 诊断失败不阻断 */ }
   // MAID-B14（2026-09-21）：本会话折叠深度。深度是「这个会话还要不要继续」的判据，
